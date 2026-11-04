@@ -1,3 +1,13 @@
+---
+title: AI Vision Patrol Robot
+emoji: 🤖
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # 🤖 AI Vision Patrol Robot — Webots R2025a + Multimodal AI & Robotics Platform
 
 > An autonomous 3D robot featuring HD computer vision, zero-shot multimodal semantic analysis, monocular depth obstacle avoidance, open-vocabulary grounding, dynamic VLM goal selection, flight logging, and an A-Frame WebXR 3D Digital Twin with bidirectional drag-and-drop object synchronization.
@@ -153,6 +163,29 @@ chmod +x run_demo.sh
 - **2D Mission Control Dashboard**: [http://localhost:8000](http://localhost:8000)
 - **3D WebXR Digital Twin**: [http://localhost:8000/vr](http://localhost:8000/vr)
 - **Mission Log**: [http://localhost:8000/download_mission_log](http://localhost:8000/download_mission_log)
+
+---
+
+## 🤗 Deploy to Hugging Face Spaces (24/7 Zero-Friction Cloud)
+
+This repository is pre-configured with `app.py`, `Dockerfile`, `packages.txt`, and `requirements.txt` for direct deployment on Hugging Face Spaces.
+
+### Option A: Create a Docker Space (Recommended)
+1. Go to [Hugging Face Spaces](https://huggingface.co/new-space).
+2. Set Space name (e.g., `ai-vision-patrol-robot`), license, and select **Docker** as Space SDK.
+3. Push this repository to your Space remote:
+   ```bash
+   git remote add space https://huggingface.co/spaces/<YOUR-USERNAME>/<SPACE-NAME>
+   git push space main
+   ```
+4. Hugging Face will automatically build the container and serve the interactive Gradio + FastAPI + WebXR dashboard on port `7860`.
+
+### Option B: Run locally on dynamic port
+```bash
+python3 controllers/mission_control/mission_control.py --port 7860
+# or via master launcher:
+python3 app.py
+```
 
 ---
 

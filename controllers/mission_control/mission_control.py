@@ -22,6 +22,7 @@ import threading
 import time
 import asyncio
 import json
+import argparse
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import List, Tuple, Set, Optional, Dict
@@ -31,6 +32,7 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
 # Set Ultralytics config dir to /tmp to avoid permission errors
@@ -102,9 +104,38 @@ except Exception as exc:
     CLIP_AVAILABLE = False
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Webots controller import (requires env vars set by run_demo.sh)
+# Webots controller import (supports WEBOTS_HOME or standard install paths)
 # ──────────────────────────────────────────────────────────────────────────────
-from controller import Supervisor  # type: ignore
+if "WEBOTS_HOME" not in os.environ:
+    if os.path.exists("/usr/local/webots"):
+        os.environ["WEBOTS_HOME"] = "/usr/local/webots"
+    elif os.path.exists("/Applications/Webots.app"):
+        os.environ["WEBOTS_HOME"] = "/Applications/Webots.app"
+    else:
+        os.environ["WEBOTS_HOME"] = "/usr/local/webots"
+
+WEBOTS_AVAILABLE = False
+Supervisor = None
+try:
+    from controller import Supervisor  # type: ignore
+    WEBOTS_AVAILABLE = True
+except Exception:
+    _webots_paths = [
+        os.path.join(os.environ.get("WEBOTS_HOME", "/usr/local/webots"), "lib", "controller", "python"),
+        os.path.join(os.environ.get("WEBOTS_HOME", "/usr/local/webots"), "Contents", "lib", "controller", "python"),
+        "/usr/local/webots/lib/controller/python",
+        "/Applications/Webots.app/Contents/lib/controller/python",
+    ]
+    for _wp in _webots_paths:
+        if os.path.exists(_wp) and _wp not in sys.path:
+            sys.path.append(_wp)
+    try:
+        from controller import Supervisor  # type: ignore
+        WEBOTS_AVAILABLE = True
+    except Exception as exc:
+        Supervisor = None
+        WEBOTS_AVAILABLE = False
+        print(f"[WARN] Webots Python controller module not loaded ({exc}). Standing by in simulation/fallback mode.")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Constants
@@ -596,8 +627,20 @@ ws_manager = ConnectionManager()
 # Webots Robot Control Thread
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def webots_loop():
-    robot = Supervisor()
-    print("✅ Connected to Webots R2025a Supervisor!")
+    if not WEBOTS_AVAILABLE or Supervisor is None:
+        print("[WARN] Webots Supervisor controller library unavailable. webots_loop standing by...")
+        while not SHUTDOWN_EVENT.is_set():
+            time.sleep(1)
+        return
+
+    try:
+        robot = Supervisor()
+        print("✅ Connected to Webots R2025a Supervisor!")
+    except Exception as exc:
+        print(f"[WARN] Failed to connect to Webots Supervisor ({exc}). webots_loop standing by...")
+        while not SHUTDOWN_EVENT.is_set():
+            time.sleep(1)
+        return
     timestep = int(robot.getBasicTimeStep())
 
     # Devices
@@ -1123,11 +1166,27 @@ async def ws_broadcast_loop():
     except asyncio.CancelledError:
         pass
 
+_THREADS_LOCK = threading.Lock()
+_THREADS_STARTED = False
+
+def start_background_threads():
+    global _THREADS_STARTED
+    with _THREADS_LOCK:
+        if _THREADS_STARTED:
+            return
+        _THREADS_STARTED = True
+        ai_thread = threading.Thread(target=ai_worker_loop, daemon=True, name="AIWorkerThread")
+        ai_thread.start()
+        t = threading.Thread(target=webots_loop, daemon=True, name="WebotsLoopThread")
+        t.start()
+        print("✅ Background AI Worker Engine & Webots Controller threads started.")
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FastAPI Application & Lifespan
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 @asynccontextmanager
 async def lifespan(app):
+    start_background_threads()
     task = asyncio.create_task(ws_broadcast_loop())
     yield
     SHUTDOWN_EVENT.set()
@@ -1143,6 +1202,15 @@ async def lifespan(app):
             pass
 
 app = FastAPI(title="Mission Control Dashboard", lifespan=lifespan)
+
+# Enable CORS for Hugging Face Spaces, reverse proxies, and iframes
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ── WebSocket Endpoint ──
 @app.websocket("/ws")
@@ -2537,6 +2605,7 @@ connectWS();
 </html>"""
 
 @app.get("/", response_class=HTMLResponse)
+@app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
     return DASHBOARD_HTML
 
@@ -2545,32 +2614,44 @@ def vr_twin():
     return VR_HTML
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Main Entry Point
+# Main Entry Point & Standalone Server
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-if __name__ == "__main__":
+def run_server(host: str = "0.0.0.0", port: int = 8000):
+    """Starts background loops and serves the FastAPI Mission Control dashboard."""
     print("=" * 65)
     print("  MISSION CONTROL — Webots R2025a + Multimodal AI + WebXR")
     print("  Purposes A, B, C, D Active | Dual Viewport | 640x480 Depth")
     print("=" * 65)
-    print(f"  Dashboard:    http://localhost:8000")
-    print(f"  VR Twin:      http://localhost:8000/vr")
-    print(f"  WebSocket:    ws://localhost:8000/ws")
-    print(f"  RGB Feed:     http://localhost:8000/video_feed")
-    print(f"  Depth Feed:   http://localhost:8000/depth_feed")
-    print(f"  Depth Snap:   http://localhost:8000/depth_frame.jpg")
-    print(f"  Mission Logs: http://localhost:8000/mission_logs")
+    print(f"  Dashboard:    http://{host}:{port}/")
+    print(f"  Dashboard Alt:http://{host}:{port}/dashboard")
+    print(f"  VR Twin:      http://{host}:{port}/vr")
+    print(f"  WebSocket:    ws://{host}:{port}/ws")
+    print(f"  RGB Feed:     http://{host}:{port}/video_feed")
+    print(f"  Depth Feed:   http://{host}:{port}/depth_feed")
+    print(f"  Depth Snap:   http://{host}:{port}/depth_frame.jpg")
+    print(f"  Mission Logs: http://{host}:{port}/mission_logs")
     print("=" * 65)
 
-    # 1. Start background AI worker daemon thread (Purposes A, B, C, D)
-    ai_thread = threading.Thread(target=ai_worker_loop, daemon=True)
-    ai_thread.start()
+    start_background_threads()
 
-    # 2. Start Webots robot control loop daemon thread
-    t = threading.Thread(target=webots_loop, daemon=True)
-    t.start()
-
-    # 3. Run FastAPI server on main thread
     try:
-        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", timeout_graceful_shutdown=1)
+        uvicorn.run(app, host=host, port=port, log_level="info", timeout_graceful_shutdown=1)
     except KeyboardInterrupt:
         pass
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="AI Vision Patrol Robot — Mission Control Server")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PORT", 8000)),
+        help="Port to run the FastAPI server on (default: 8000, or $PORT)"
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=os.environ.get("HOST", "0.0.0.0"),
+        help="Host interface to bind to (default: 0.0.0.0, or $HOST)"
+    )
+    args = parser.parse_args()
+    run_server(host=args.host, port=args.port)
