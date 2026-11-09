@@ -3,17 +3,39 @@ title: Autonomous Patrol Rover
 emoji: 🤖
 colorFrom: blue
 colorTo: indigo
-sdk: gradio
-sdk_version: 6.31.0
-python_version: '3.12'
-app_file: app.py
+sdk: docker
+app_port: 7860
 pinned: false
 license: mit
 ---
 
-# 🤖 AI Vision Patrol Robot — Webots R2025a + Multimodal AI & Robotics Platform
+# 🤖 AI Vision Patrol Rover — 3D Cyberpunk GTA Mission Control & Multimodal AI Platform
 
-> An autonomous 3D robot featuring HD computer vision, zero-shot multimodal semantic analysis, monocular depth obstacle avoidance, open-vocabulary grounding, dynamic VLM goal selection, flight logging, and an A-Frame WebXR 3D Digital Twin with bidirectional drag-and-drop object synchronization.
+> An autonomous 3D robot featuring a widescreen 3rd-person chase camera ("TPP"), 1st-person bumper POV ("FPP"), monocular depth map, zero-latency multimodal semantic similarity telemetry, dynamic waypoint patrolling, open-vocabulary target intercept, and GTA circular minimap HUD.
+
+---
+
+## ⚡ Quickstart: 1-Command Installation & Launch
+
+### Option 1: macOS Homebrew
+```bash
+brew install GauravSrivastava-prog/tap/patrol-rover
+patrol-rover --open
+```
+
+### Option 2: pipx / uvx (Zero Install)
+```bash
+uvx --from git+https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git patrol-rover --open
+# OR with pipx
+pipx run --spec git+https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git patrol-rover --open
+```
+
+### Option 3: Docker Run
+```bash
+docker run -p 7860:7860 gauravprog/autonomous-patrol-rover
+```
+
+Open `http://localhost:7860` in any web browser to enter the fullscreen GTA Mission Control deck.
 
 ---
 
