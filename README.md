@@ -1,11 +1,14 @@
 ---
-title: AI Vision Patrol Robot
+title: Autonomous Patrol Rover
 emoji: 🤖
 colorFrom: blue
 colorTo: indigo
-sdk: docker
-app_port: 7860
+sdk: gradio
+sdk_version: 6.31.0
+python_version: '3.12'
+app_file: app.py
 pinned: false
+license: mit
 ---
 
 # 🤖 AI Vision Patrol Robot — Webots R2025a + Multimodal AI & Robotics Platform
