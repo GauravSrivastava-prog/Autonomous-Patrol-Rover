@@ -13,3 +13,4 @@ mission_log.md
 *.log
 .agent/
 .env
+scratch/

@@ -271,14 +271,14 @@ with gr.Blocks() as demo:
                    style="text-decoration:none; background:#7b1fa2; color:white;
                           padding:8px 16px; border-radius:6px; font-weight:600;">
                    ↗ Fullscreen 3D WebXR Twin</a>
-                <a href="/video_feed" target="_blank"
+                <a href="/video_frame.jpg" target="_blank"
                    style="text-decoration:none; background:#388e3c; color:white;
                           padding:8px 16px; border-radius:6px; font-weight:600;">
-                   📹 RGB Stream</a>
-                <a href="/depth_feed" target="_blank"
+                   📷 RGB Snapshot</a>
+                <a href="/depth_frame.jpg" target="_blank"
                    style="text-decoration:none; background:#d32f2f; color:white;
                           padding:8px 16px; border-radius:6px; font-weight:600;">
-                   🗺️ Depth Stream</a>
+                   🗺️ Depth Snapshot</a>
             </div>
             """
         )
@@ -296,14 +296,37 @@ with gr.Blocks() as demo:
         with gr.TabItem("📹 Dual Vision Feeds"):
             with gr.Row():
                 gr.HTML(
-                    '<h3>Live RGB Camera + HUD</h3>'
-                    '<img src="/video_feed" style="width:100%; max-height:480px; '
-                    'border-radius:8px; border:1px solid #333;" />'
+                    """
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <h3 style="margin:0 0 4px 0; color:#eee;">Live RGB Camera + HUD</h3>
+                        <img id="tab3_rgb_feed" src="/video_frame.jpg"
+                             style="width:100%; max-height:480px; border-radius:8px; border:1px solid #333; object-fit:contain; background:#000;" />
+                    </div>
+                    """
                 )
                 gr.HTML(
-                    '<h3>Monocular Depth Map (MAGMA)</h3>'
-                    '<img src="/depth_feed" style="width:100%; max-height:480px; '
-                    'border-radius:8px; border:1px solid #333;" />'
+                    """
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <h3 style="margin:0 0 4px 0; color:#eee;">Monocular Depth Map (MAGMA)</h3>
+                        <img id="tab3_depth_feed" src="/depth_frame.jpg"
+                             style="width:100%; max-height:480px; border-radius:8px; border:1px solid #333; object-fit:contain; background:#000;" />
+                    </div>
+                    <script>
+                    (function pollTab3Feeds() {
+                        const rgbImg = document.getElementById('tab3_rgb_feed');
+                        const depthImg = document.getElementById('tab3_depth_feed');
+                        function update() {
+                            if (!document.hidden) {
+                                const t = Date.now();
+                                if (rgbImg) rgbImg.src = '/video_frame.jpg?t=' + t;
+                                if (depthImg) depthImg.src = '/depth_frame.jpg?t=' + t;
+                            }
+                            setTimeout(update, 120);
+                        }
+                        setTimeout(update, 250);
+                    })();
+                    </script>
+                    """
                 )
 
         with gr.TabItem("🕹️ Remote Controls & VLM Deck"):
