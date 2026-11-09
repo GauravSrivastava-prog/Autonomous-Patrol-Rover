@@ -17,9 +17,10 @@ import threading
 from typing import Optional
 
 from fastapi import FastAPI, Response, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import gradio as gr
+import html
 
 # Import the lightweight, decoupled robotics engine
 from core_engine import RobotController, ControlMode, ARENA_OBJECTS
@@ -103,6 +104,10 @@ def get_mission_logs():
         "total": 1,
     }
 
+@api.get("/dashboard", response_class=HTMLResponse)
+def get_dashboard():
+    return HTMLResponse(content=DASHBOARD_HTML)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. Clean, Resilient Dashboard Viewport
 # ──────────────────────────────────────────────────────────────────────────────
@@ -110,6 +115,9 @@ DASHBOARD_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
+<base href="/">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   :root { --bg:#0b0f19; --card:#111827; --accent:#00e5ff; --border:#1f293d; --text:#e2e8f0; }
   body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
@@ -142,27 +150,26 @@ DASHBOARD_HTML = """
   <div class="card">
     <div style="font-weight:700; margin-bottom:8px;">🕹️ MODE & OPEN-VOCABULARY TARGETING</div>
     <div class="btn-row">
-      <button id="btnPatrol" class="active" onclick="window.setMode('AI_PATROL')">🧠 AI Patrol</button>
-      <button id="btnChase" onclick="window.setMode('AI_CHASE')">🎯 AI Chase</button>
-      <button id="btnManual" onclick="window.setMode('MANUAL')">🕹️ Manual</button>
-      <button onclick="window.postApi('/reset')">🔄 Teleport (0,0)</button>
+      <button id="btnPatrol" class="active">🧠 AI Patrol</button>
+      <button id="btnChase">🎯 AI Chase</button>
+      <button id="btnManual">🕹️ Manual</button>
+      <button id="btnReset">🔄 Teleport (0,0)</button>
     </div>
 
     <div style="margin-top:12px;">
       <input id="promptInput" type="text" placeholder="Type: blue chair, wooden crate, hazard box..." 
-             onkeydown="if(event.key==='Enter') window.sendTarget()"
              style="width:calc(100% - 90px); padding:8px; background:#0f172a; border:1px solid var(--border); color:#fff; border-radius:6px;" />
-      <button onclick="window.sendTarget()" style="width:75px;">Seek</button>
+      <button id="btnSeek" style="width:75px;">Seek</button>
     </div>
 
     <!-- D-PAD for Manual Teleop -->
     <div id="dpad" style="margin-top:14px;">
       <div class="d-pad">
-        <div></div><button onmousedown="window.manual('FORWARD')" onmouseup="window.manual('STOP')">▲</button><div></div>
-        <button onmousedown="window.manual('LEFT')" onmouseup="window.manual('STOP')">◄</button>
-        <button onclick="window.manual('STOP')" style="background:#ef4444;">■</button>
-        <button onmousedown="window.manual('RIGHT')" onmouseup="window.manual('STOP')">►</button>
-        <div></div><button onmousedown="window.manual('BACKWARD')" onmouseup="window.manual('STOP')">▼</button><div></div>
+        <div></div><button id="dpadFwd">▲</button><div></div>
+        <button id="dpadLeft">◄</button>
+        <button id="dpadStop" style="background:#ef4444;">■</button>
+        <button id="dpadRight">►</button>
+        <div></div><button id="dpadBack">▼</button><div></div>
       </div>
     </div>
   </div>
@@ -221,8 +228,16 @@ async function pollTelemetry() {
       const d = await res.json();
       const statusEl = document.getElementById('telemetryStatus');
       if (statusEl) {
+        const sl = typeof d.speed_l === 'number' ? d.speed_l.toFixed(2) : d.speed_l;
+        const sr = typeof d.speed_r === 'number' ? d.speed_r.toFixed(2) : d.speed_r;
         statusEl.textContent = 
-          `POS: (${d.x.toFixed(2)}, ${d.y.toFixed(2)}) | SPEED: ${d.speed_l}/${d.speed_r} | ${d.status}`;
+          `POS: (${d.x.toFixed(2)}, ${d.y.toFixed(2)}) | SPEED: ${sl}/${sr} | ${d.status}`;
+      }
+      if (d.mode) {
+        document.querySelectorAll('.btn-row button').forEach(b => b.classList.remove('active'));
+        if (d.mode === 'AI_PATROL') { const b = document.getElementById('btnPatrol'); if (b) b.classList.add('active'); }
+        else if (d.mode === 'AI_CHASE') { const b = document.getElementById('btnChase'); if (b) b.classList.add('active'); }
+        else if (d.mode === 'MANUAL') { const b = document.getElementById('btnManual'); if (b) b.classList.add('active'); }
       }
       drawRadar(d.x, d.y, d.yaw_deg * Math.PI / 180, d.trail);
     }
@@ -233,38 +248,100 @@ async function pollTelemetry() {
 }
 setTimeout(pollTelemetry, 400);
 
-// Expose functions globally to satisfy Gradio iframe scoping
-window.postApi = function(url) { 
+// ── Global Scope Core Actions ──
+function postApi(url) { 
   return fetch(url, { method: 'POST' }).catch(() => backoff()); 
-};
+}
 
-window.setMode = function(m) {
-  window.postApi('/set_mode/' + m);
+function setMode(m) {
+  postApi('/set_mode/' + m);
   document.querySelectorAll('.btn-row button').forEach(b => b.classList.remove('active'));
   if (m === 'AI_PATROL') { const b = document.getElementById('btnPatrol'); if (b) b.classList.add('active'); }
   if (m === 'AI_CHASE') { const b = document.getElementById('btnChase'); if (b) b.classList.add('active'); }
   if (m === 'MANUAL') { const b = document.getElementById('btnManual'); if (b) b.classList.add('active'); }
-};
+}
 
-window.manual = function(cmd) { 
-  window.postApi('/manual/' + cmd); 
-};
+function manual(cmd) { 
+  postApi('/manual/' + cmd); 
+}
 
-window.sendTarget = function() {
+function sendTarget() {
   const inputEl = document.getElementById('promptInput');
   if (!inputEl) return;
   const p = inputEl.value.trim();
   if (p) {
     fetch('/set_target?prompt=' + encodeURIComponent(p), { method: 'POST' });
-    window.setMode('AI_CHASE');
+    setMode('AI_CHASE');
   }
-};
+}
 
-// Also expose as local variables in scope for inline handlers
-var postApi = window.postApi;
-var setMode = window.setMode;
-var manual = window.manual;
-var sendTarget = window.sendTarget;
+// Expose on window as well for full compatibility
+window.postApi = postApi;
+window.setMode = setMode;
+window.manual = manual;
+window.sendTarget = sendTarget;
+
+// ── Robust DOM Event Binding (Iframe & Gradio-Safe) ──
+function initEventBindings() {
+  const bindClick = (id, handler) => {
+    const el = document.getElementById(id);
+    if (el && !el._boundClick) {
+      el.addEventListener('click', handler);
+      el._boundClick = true;
+    }
+  };
+
+  bindClick('btnPatrol', () => setMode('AI_PATROL'));
+  bindClick('btnChase', () => setMode('AI_CHASE'));
+  bindClick('btnManual', () => setMode('MANUAL'));
+  bindClick('btnReset', () => postApi('/reset'));
+  bindClick('btnSeek', sendTarget);
+
+  const inputEl = document.getElementById('promptInput');
+  if (inputEl && !inputEl._boundKey) {
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendTarget();
+    });
+    inputEl._boundKey = true;
+  }
+
+  // D-pad press & release bindings (Mouse & Touch)
+  const bindHold = (id, cmd) => {
+    const el = document.getElementById(id);
+    if (el && !el._boundHold) {
+      const start = (e) => { e.preventDefault(); manual(cmd); };
+      const stop = (e) => { e.preventDefault(); manual('STOP'); };
+      el.addEventListener('mousedown', start);
+      el.addEventListener('mouseup', stop);
+      el.addEventListener('mouseleave', stop);
+      el.addEventListener('touchstart', start, { passive: false });
+      el.addEventListener('touchend', stop, { passive: false });
+      el.addEventListener('touchcancel', stop, { passive: false });
+      el._boundHold = true;
+    }
+  };
+
+  bindHold('dpadFwd', 'FORWARD');
+  bindHold('dpadBack', 'BACKWARD');
+  bindHold('dpadLeft', 'LEFT');
+  bindHold('dpadRight', 'RIGHT');
+  
+  const stopEl = document.getElementById('dpadStop');
+  if (stopEl && !stopEl._boundClick) {
+    stopEl.addEventListener('click', (e) => { e.preventDefault(); manual('STOP'); });
+    stopEl._boundClick = true;
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initEventBindings);
+} else {
+  initEventBindings();
+}
+// Additional fallbacks for Gradio iframe / Svelte delayed mounting
+setTimeout(initEventBindings, 150);
+setTimeout(initEventBindings, 500);
+setTimeout(initEventBindings, 1500);
 
 const RADAR_OBJECTS = [
   { name: 'RED', x: 1.15, y: 1.00, color: '#ff1744' },
@@ -282,31 +359,39 @@ function drawRadar(rx, ry, ryaw, trail) {
   ctx.clearRect(0, 0, 240, 240);
   const cx = 120, cy = 120, scale = 55.0;
 
-  // Grid circles
+  // Grid circles & crosshair
   ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, 0.5 * scale, 0, Math.PI * 2); ctx.stroke();
   ctx.beginPath(); ctx.arc(cx, cy, 1.0 * scale, 0, Math.PI * 2); ctx.stroke();
   ctx.beginPath(); ctx.arc(cx, cy, 1.8 * scale, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx - 1.8 * scale, cy); ctx.lineTo(cx + 1.8 * scale, cy);
+  ctx.moveTo(cx, cy - 1.8 * scale); ctx.lineTo(cx, cy + 1.8 * scale);
+  ctx.stroke();
 
   // Arena Objects on Radar
   RADAR_OBJECTS.forEach(obj => {
     ctx.fillStyle = obj.color;
     ctx.beginPath();
-    ctx.arc(cx + obj.x * scale, cy - obj.y * scale, 4, 0, Math.PI * 2);
+    ctx.arc(cx + obj.x * scale, cy - obj.y * scale, 4.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = '#94a3b8';
     ctx.font = '8px monospace';
     ctx.fillText(obj.name.substring(0, 3), cx + obj.x * scale + 5, cy - obj.y * scale + 3);
   });
 
   // Trail
   if (trail && trail.length > 1) {
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.3)';
+    ctx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     trail.forEach((pt, i) => {
       const px = cx + pt[0] * scale, py = cy - pt[1] * scale;
       if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
     });
     ctx.stroke();
+    ctx.lineWidth = 1.0;
   }
 
   // Rover Heading Indicator
@@ -314,23 +399,30 @@ function drawRadar(rx, ry, ryaw, trail) {
   ctx.translate(cx + rx * scale, cy - ry * scale);
   ctx.rotate(-ryaw);
   ctx.fillStyle = '#00e5ff';
-  ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(5, 5); ctx.lineTo(-5, 5); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0, -9); ctx.lineTo(5, 5); ctx.lineTo(-5, 5); ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.arc(0, 0, 1.5, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
 }
 
-// Initial draw to render minimap objects immediately
+// Initial draw immediately on load
+drawRadar(0, 0, 0.4, []);
+window.addEventListener('load', () => drawRadar(0, 0, 0.4, []));
 setTimeout(() => drawRadar(0, 0, 0.4, []), 150);
 
-// Keyboard WASD Teleop Support
-const keyMap = { w: 'FORWARD', a: 'LEFT', s: 'BACKWARD', d: 'RIGHT' };
+// Keyboard WASD & Arrow Keys Teleop Support
+const keyMap = { 
+  w: 'FORWARD', a: 'LEFT', s: 'BACKWARD', d: 'RIGHT',
+  arrowup: 'FORWARD', arrowleft: 'LEFT', arrowdown: 'BACKWARD', arrowright: 'RIGHT'
+};
 const activeKeys = new Set();
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
   if (keyMap[k] && !activeKeys.has(k)) {
     activeKeys.add(k);
-    window.setMode('MANUAL');
-    window.manual(keyMap[k]);
+    setMode('MANUAL');
+    manual(keyMap[k]);
   }
 });
 document.addEventListener('keyup', e => {
@@ -338,8 +430,8 @@ document.addEventListener('keyup', e => {
   const k = e.key.toLowerCase();
   if (keyMap[k]) {
     activeKeys.delete(k);
-    if (activeKeys.size === 0) window.manual('STOP');
-    else window.manual(keyMap[Array.from(activeKeys)[activeKeys.size - 1]]);
+    if (activeKeys.size === 0) manual('STOP');
+    else manual(keyMap[Array.from(activeKeys)[activeKeys.size - 1]]);
   }
 });
 </script>
@@ -350,8 +442,13 @@ document.addEventListener('keyup', e => {
 # ──────────────────────────────────────────────────────────────────────────────
 # 5. Gradio 6 App Interface & Launch Lifecycle
 # ──────────────────────────────────────────────────────────────────────────────
+iframe_srcdoc = html.escape(DASHBOARD_HTML, quote=True)
 with gr.Blocks(title="AI Patrol Rover") as demo:
-    gr.HTML(DASHBOARD_HTML)
+    gr.HTML(
+        f'<iframe id="roverDashboard" src="/dashboard" srcdoc="{iframe_srcdoc}" '
+        f'style="width:100%; height:860px; border:none; border-radius:8px; display:block; background:#0b0f19;" '
+        f'allow="autoplay"></iframe>'
+    )
 
 if __name__ == "__main__":
     print(f"🚀 Starting clean-sheet rover on 0.0.0.0:{PORT}...")
