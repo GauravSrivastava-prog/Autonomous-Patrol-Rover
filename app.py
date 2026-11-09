@@ -20,7 +20,6 @@ from fastapi import FastAPI, Response, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import gradio as gr
-import html
 
 # Import the lightweight, decoupled robotics engine
 from core_engine import RobotController, ControlMode, ARENA_OBJECTS
@@ -188,6 +187,39 @@ DASHBOARD_HTML = """
 let backoffUntil = 0;
 function backoff() { backoffUntil = Date.now() + 3000; }
 
+// ── Global Scope Core Actions (Attached to window immediately at script top) ──
+function postApi(url) { 
+  return fetch(url, { method: 'POST' }).catch(() => backoff()); 
+}
+
+function setMode(m) {
+  postApi('/set_mode/' + m);
+  document.querySelectorAll('.btn-row button').forEach(b => b.classList.remove('active'));
+  if (m === 'AI_PATROL') { const b = document.getElementById('btnPatrol'); if (b) b.classList.add('active'); }
+  if (m === 'AI_CHASE') { const b = document.getElementById('btnChase'); if (b) b.classList.add('active'); }
+  if (m === 'MANUAL') { const b = document.getElementById('btnManual'); if (b) b.classList.add('active'); }
+}
+
+function manual(cmd) { 
+  postApi('/manual/' + cmd); 
+}
+
+function sendTarget() {
+  const inputEl = document.getElementById('promptInput');
+  if (!inputEl) return;
+  const p = inputEl.value.trim();
+  if (p) {
+    fetch('/set_target?prompt=' + encodeURIComponent(p), { method: 'POST' });
+    setMode('AI_CHASE');
+  }
+}
+
+// Explicitly bind to window immediately at startup
+window.postApi = postApi;
+window.setMode = setMode;
+window.manual = manual;
+window.sendTarget = sendTarget;
+
 // Polite 250ms Vision Refresh
 function pollImages() {
   if (document.hidden) { setTimeout(pollImages, 1000); return; }
@@ -247,39 +279,6 @@ async function pollTelemetry() {
   setTimeout(pollTelemetry, 1000);
 }
 setTimeout(pollTelemetry, 400);
-
-// ── Global Scope Core Actions ──
-function postApi(url) { 
-  return fetch(url, { method: 'POST' }).catch(() => backoff()); 
-}
-
-function setMode(m) {
-  postApi('/set_mode/' + m);
-  document.querySelectorAll('.btn-row button').forEach(b => b.classList.remove('active'));
-  if (m === 'AI_PATROL') { const b = document.getElementById('btnPatrol'); if (b) b.classList.add('active'); }
-  if (m === 'AI_CHASE') { const b = document.getElementById('btnChase'); if (b) b.classList.add('active'); }
-  if (m === 'MANUAL') { const b = document.getElementById('btnManual'); if (b) b.classList.add('active'); }
-}
-
-function manual(cmd) { 
-  postApi('/manual/' + cmd); 
-}
-
-function sendTarget() {
-  const inputEl = document.getElementById('promptInput');
-  if (!inputEl) return;
-  const p = inputEl.value.trim();
-  if (p) {
-    fetch('/set_target?prompt=' + encodeURIComponent(p), { method: 'POST' });
-    setMode('AI_CHASE');
-  }
-}
-
-// Expose on window as well for full compatibility
-window.postApi = postApi;
-window.setMode = setMode;
-window.manual = manual;
-window.sendTarget = sendTarget;
 
 // ── Robust DOM Event Binding (Iframe & Gradio-Safe) ──
 function initEventBindings() {
@@ -442,12 +441,11 @@ document.addEventListener('keyup', e => {
 # ──────────────────────────────────────────────────────────────────────────────
 # 5. Gradio 6 App Interface & Launch Lifecycle
 # ──────────────────────────────────────────────────────────────────────────────
-iframe_srcdoc = html.escape(DASHBOARD_HTML, quote=True)
 with gr.Blocks(title="AI Patrol Rover") as demo:
     gr.HTML(
-        f'<iframe id="roverDashboard" src="/dashboard" srcdoc="{iframe_srcdoc}" '
-        f'style="width:100%; height:860px; border:none; border-radius:8px; display:block; background:#0b0f19;" '
-        f'allow="autoplay"></iframe>'
+        '<iframe id="roverDashboard" src="/dashboard" '
+        'style="width:100%; height:860px; border:none; border-radius:8px; display:block; background:#0b0f19;" '
+        'allow="autoplay"></iframe>'
     )
 
 if __name__ == "__main__":
