@@ -48,60 +48,80 @@ if not os.path.exists(os.path.join(_root_dir, "worlds")):
     _root_dir = os.getcwd()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Attempt to import YOLOv8
+# Safe Lazy AI Model Loading (YOLOv8 + OpenAI CLIP)
+# Defer heavy model imports & JIT forward passes outside of module import time
+# to eliminate import-time CUDA context initialization & C++ thread aborts.
 # ──────────────────────────────────────────────────────────────────────────────
-try:
-    from ultralytics import YOLO
-    _candidate_paths = [
-        os.path.join(_root_dir, "yolov8n.pt"),
-        os.path.join(os.path.dirname(_current_file), "yolov8n.pt"),
-        "yolov8n.pt"
-    ]
-    _m_path = next((p for p in _candidate_paths if os.path.exists(p)), "yolov8n.pt")
-    _yolo_model = YOLO(_m_path)
-    YOLO_AVAILABLE = True
-except Exception as exc:
-    print(f"[WARN] YOLOv8 not available ({exc}); running HSV-only mode.")
-    _yolo_model = None
-    YOLO_AVAILABLE = False
+_yolo_model = None
+YOLO_AVAILABLE = False
+clip_model = None
+clip_preprocess = None
+clip_tokens = None
+clip_text_features = None
+CLIP_AVAILABLE = False
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Attempt to import OpenAI CLIP for zero-shot semantic scene analysis & open-vocab
-# ──────────────────────────────────────────────────────────────────────────────
-try:
-    import clip
-    import torch
+CLIP_PROMPTS = [
+    "an open gray tiled floor with empty space",
+    "a red and white striped traffic cone beacon",
+    "a green potted tree plant in a brown pot",
+    "a blue chair with legs and backrest",
+    "a close-up wall or brown wooden box blocking the view"
+]
+CLIP_DISPLAY_MAP = {
+    "an open gray tiled floor with empty space": "Clear Open Floor",
+    "a red and white striped traffic cone beacon": "Red Traffic Beacon",
+    "a green potted tree plant in a brown pot": "Fragile Potted Plant",
+    "a blue chair with legs and backrest": "Blue Lab Workstation",
+    "a close-up wall or brown wooden box blocking the view": "Close Wall / Crate Hazard"
+}
 
-    CLIP_DEVICE = "cpu"
-    clip_model, clip_preprocess = clip.load("ViT-B/32", device=CLIP_DEVICE)
-    CLIP_PROMPTS = [
-        "an open gray tiled floor with empty space",
-        "a red and white striped traffic cone beacon",
-        "a green potted tree plant in a brown pot",
-        "a blue chair with legs and backrest",
-        "a close-up wall or brown wooden box blocking the view"
-    ]
-    CLIP_DISPLAY_MAP = {
-        "an open gray tiled floor with empty space": "Clear Open Floor",
-        "a red and white striped traffic cone beacon": "Red Traffic Beacon",
-        "a green potted tree plant in a brown pot": "Fragile Potted Plant",
-        "a blue chair with legs and backrest": "Blue Lab Workstation",
-        "a close-up wall or brown wooden box blocking the view": "Close Wall / Crate Hazard"
-    }
-    clip_tokens = clip.tokenize(CLIP_PROMPTS).to(CLIP_DEVICE)
-    with torch.no_grad():
-        clip_text_features = clip_model.encode_text(clip_tokens)
-        clip_text_features /= clip_text_features.norm(dim=-1, keepdim=True)
-    CLIP_AVAILABLE = True
-    print("✅ OpenAI CLIP ViT-B/32 loaded for zero-shot scene analysis & open-vocab tracking.")
-except Exception as exc:
-    print(f"[WARN] OpenAI CLIP not available ({exc}); semantic analysis disabled.")
-    clip_model = None
-    clip_preprocess = None
-    CLIP_PROMPTS = []
-    CLIP_DISPLAY_MAP = {}
-    clip_text_features = None
-    CLIP_AVAILABLE = False
+_MODELS_INITIALIZED = False
+_MODELS_LOCK = threading.Lock()
+
+def ensure_ai_models():
+    """Lazily and safely loads YOLOv8 and OpenAI CLIP outside of module import time."""
+    global _yolo_model, YOLO_AVAILABLE, clip_model, clip_preprocess, clip_tokens, clip_text_features, CLIP_AVAILABLE, _MODELS_INITIALIZED
+    with _MODELS_LOCK:
+        if _MODELS_INITIALIZED:
+            return
+        _MODELS_INITIALIZED = True
+
+        # 1. Attempt YOLOv8 load
+        try:
+            from ultralytics import YOLO
+            _candidate_paths = [
+                os.path.join(_root_dir, "yolov8n.pt"),
+                os.path.join(os.path.dirname(_current_file), "yolov8n.pt"),
+                "yolov8n.pt"
+            ]
+            _m_path = next((p for p in _candidate_paths if os.path.exists(p)), "yolov8n.pt")
+            _yolo_model = YOLO(_m_path)
+            YOLO_AVAILABLE = True
+            print("✅ YOLOv8 loaded successfully.")
+        except Exception as exc:
+            print(f"[WARN] YOLOv8 not available ({exc}); running HSV-only mode.")
+            _yolo_model = None
+            YOLO_AVAILABLE = False
+
+        # 2. Attempt OpenAI CLIP load
+        try:
+            import clip
+            import torch
+
+            clip_device = "cpu"
+            clip_model, clip_preprocess = clip.load("ViT-B/32", device=clip_device)
+            clip_tokens = clip.tokenize(CLIP_PROMPTS).to(clip_device)
+            with torch.no_grad():
+                clip_text_features = clip_model.encode_text(clip_tokens)
+                clip_text_features /= clip_text_features.norm(dim=-1, keepdim=True)
+            CLIP_AVAILABLE = True
+            print("✅ OpenAI CLIP ViT-B/32 loaded for zero-shot scene analysis & open-vocab tracking.")
+        except Exception as exc:
+            print(f"[WARN] OpenAI CLIP not available ({exc}); semantic analysis disabled.")
+            clip_model = None
+            clip_preprocess = None
+            clip_text_features = None
+            CLIP_AVAILABLE = False
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Webots controller import (supports WEBOTS_HOME or standard install paths)
@@ -191,9 +211,9 @@ class SharedState:
 
         # targets positions and drag queue
         self.target_positions: dict = {
-            "RED": (0.9, 0.7),
-            "GREEN": (-0.8, 0.8),
-            "BLUE": (0.0, -0.9),
+            "RED": (1.1, 0.9),
+            "GREEN": (-0.9, 1.1),
+            "BLUE": (0.0, -1.0),
         }
         self.drag_queue: List[Tuple[str, float, float, float]] = []
 
@@ -222,6 +242,7 @@ class SharedState:
 
         # Purpose D: Mission Logs
         self.mission_logs: List[str] = []
+        self.latest_mission_log: str = "Mission logger standby. 30Hz synthetic simulation active."
 
         # Placeholder 640x480 dark-slate RGB image with cyan text
         placeholder = np.full((CAM_H, CAM_W, 3), (35, 25, 20), dtype=np.uint8)
@@ -364,16 +385,19 @@ def compute_monocular_depth_and_hazard(bgr_frame: np.ndarray):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Purpose C: Open-Vocabulary Target Tracking Pipeline (Proposals + CLIP)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_CLIP_TEXT_CACHE: dict = {}
+
 def find_openvocab_target(bgr_frame: np.ndarray, prompt: str):
     """
     Runs fast candidate proposal extraction + CLIP zero-shot region scoring.
+    Caches text embeddings to prevent free-tier CPU starvation.
     Returns best candidate dict or None.
     """
     if not CLIP_AVAILABLE or not prompt or prompt.lower() in ["clear", "none", ""]:
         return None
 
     H, W = bgr_frame.shape[:2]
-    proposals = []
+    p_key = prompt.lower().strip()
 
     # 1. Edge & Contour based object proposals
     gray = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
@@ -381,17 +405,18 @@ def find_openvocab_target(bgr_frame: np.ndarray, prompt: str):
     thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    proposals = []
     for c in contours:
         area = cv2.contourArea(c)
-        if 2200 < area < 180000:
+        if 2000 < area < 180000:
             x, y, w, h = cv2.boundingRect(c)
             aspect = w / float(h)
-            if 0.35 < aspect < 2.8 and w > 40 and h > 40:
+            if 0.30 < aspect < 3.0 and w > 35 and h > 35:
                 proposals.append((x, y, w, h, area))
 
-    # Sort proposals by area descending and take top 6
+    # Sort proposals by area descending and take top 5
     proposals.sort(key=lambda p: p[4], reverse=True)
-    candidates = proposals[:6]
+    candidates = proposals[:5]
 
     if not candidates:
         candidates = [
@@ -401,10 +426,13 @@ def find_openvocab_target(bgr_frame: np.ndarray, prompt: str):
         ]
 
     try:
-        tokens = clip.tokenize([f"a {prompt} in a lab arena"]).to(CLIP_DEVICE)
-        with torch.no_grad():
-            text_feat = clip_model.encode_text(tokens)
-            text_feat /= text_feat.norm(dim=-1, keepdim=True)
+        if p_key not in _CLIP_TEXT_CACHE:
+            tokens = clip.tokenize([f"a {p_key} in a lab arena"]).to(CLIP_DEVICE)
+            with torch.no_grad():
+                tf = clip_model.encode_text(tokens)
+                tf /= tf.norm(dim=-1, keepdim=True)
+                _CLIP_TEXT_CACHE[p_key] = tf
+        text_feat = _CLIP_TEXT_CACHE[p_key]
 
         best_score = -1.0
         best_cand = None
@@ -431,7 +459,7 @@ def find_openvocab_target(bgr_frame: np.ndarray, prompt: str):
                 best_score = sim
                 best_cand = (x, y, w, h, area)
 
-        if best_cand is not None and best_score > 0.17:
+        if best_cand is not None and best_score > 0.16:
             bx, by, bw, bh, barea = best_cand
             return {
                 "box": [bx, by, bx + bw, by + bh],
@@ -450,9 +478,11 @@ def find_openvocab_target(bgr_frame: np.ndarray, prompt: str):
 # Purpose A: Dynamic Goal Selection & Semantic Navigation (VLM + CLIP Planner)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 VLM_TARGET_CATALOG = [
-    {"name": "GREEN", "desc": "Potted Plant in NW Sector", "reason": "inspect environmental flora perimeter"},
-    {"name": "RED", "desc": "Traffic Cone Beacon in NE Sector", "reason": "calibrate optical beacon tracking"},
-    {"name": "BLUE", "desc": "Lab Workstation in South Sector", "reason": "survey robotics equipment station"},
+    {"name": "RED", "desc": "Traffic Cone Beacon in NE Sector", "coords": (1.1, 0.9), "reason": "calibrate optical beacon tracking"},
+    {"name": "GREEN", "desc": "Potted Plant in NW Sector", "coords": (-0.9, 1.1), "reason": "inspect environmental flora perimeter"},
+    {"name": "BLUE", "desc": "Lab Workstation Chair in South Sector", "coords": (0.0, -1.0), "reason": "survey robotics workstation"},
+    {"name": "CRATE", "desc": "Wooden Freight Crate in SW Sector", "coords": (-1.2, -1.2), "reason": "inspect cargo container staging"},
+    {"name": "HAZARD", "desc": "Yellow Hazard Box in Center Sector", "coords": (0.0, 0.2), "reason": "assess low obstacle hazard clearance"},
 ]
 vlm_cycle_index = 0
 
@@ -471,18 +501,52 @@ def plan_vlm_goal():
     with STATE.lock:
         STATE.preferred_target = tname
         STATE.vlm_goal_instruction = instruction
-        if STATE.auto_goal_vlm and STATE.mode != ControlMode.AI_CHASE:
+        if STATE.auto_goal_vlm:
             STATE.mode = ControlMode.AI_CHASE
+
+    log_mission_event(f"VLM Goal Planned: {tname} ({tdesc})", category="VLM")
     return instruction, tname
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Purpose D: Automated Mission Logging & Natural Language Captioning
+# Purpose D: Automated Mission Logging & Event-Driven Captioning
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def log_mission_event(action: str, category: str = "TACTICAL"):
+    """
+    Synthesizes a rich event-driven natural-language mission log entry with telemetry
+    context and appends it to STATE.mission_logs and mission_log.md.
+    """
+    with STATE.lock:
+        pos = list(STATE.pos)
+        yaw = STATE.yaw_deg
+        mode = STATE.mode.value
+        locked = STATE.locked_target
+        openvocab = STATE.openvocab_prompt
+
+    t_str = time.strftime("%H:%M:%S")
+    target_info = f"Target: '{openvocab}'" if openvocab else f"Target: {locked}"
+    log_line = f"[{t_str}] [{category}] POS ({pos[0]:.2f}, {pos[1]:.2f}) | YAW {yaw:.1f}° | MODE: {mode} | {target_info} — {action}"
+
+    with STATE.lock:
+        STATE.mission_logs.append(log_line)
+        if len(STATE.mission_logs) > 60:
+            STATE.mission_logs = STATE.mission_logs[-60:]
+        STATE.latest_mission_log = log_line
+
+    md_path = os.path.join(_root_dir, "mission_log.md")
+    write_header = not os.path.exists(md_path) or os.path.getsize(md_path) == 0
+    try:
+        with open(md_path, "a", encoding="utf-8") as f:
+            if write_header:
+                f.write("# 📋 Autonomous Mission Control — Telemetry & VLM Flight Log\n")
+                f.write("**Platform**: Webots R2025a | **Vision**: YOLOv8 + CLIP + Monocular Depth | **Modes**: AI_PATROL / AI_CHASE / MANUAL\n\n")
+                f.write("| Timestamp | Pose (X, Y, Yaw) | Mode | Category | Tactical Event & Perception |\n")
+                f.write("|:---------:|:----------------:|:----:|:--------:|:----------------------------|\n")
+            f.write(f"| `{t_str}` | `({pos[0]:.2f}, {pos[1]:.2f}, {yaw:.1f}°)` | **{mode}** | {category} | {action} ({target_info}) |\n")
+    except Exception as e:
+        pass
+
 def generate_mission_log_entry():
-    """
-    Synthesizes a rich natural-language mission log entry with telemetry context
-    and appends it to STATE.mission_logs and mission_log.md.
-    """
+    """Periodic status caption generator (called every 8s)."""
     with STATE.lock:
         pos = list(STATE.pos)
         yaw = STATE.yaw_deg
@@ -494,57 +558,42 @@ def generate_mission_log_entry():
         openvocab = STATE.openvocab_prompt
         speed = STATE.left_speed
 
-    t_str = time.strftime("%H:%M:%S")
-
     has_chase_target = (mode == "AI_CHASE") and (locked not in ["NONE", ""] or bool(openvocab))
     if depth_haz and not has_chase_target:
         action = f"Rerouting around low obstacle (hazard score: {depth_score:.2f})"
+        cat = "AVOID"
     elif mode == "AI_CHASE":
-        if locked != "NONE":
-            action = f"Tracking target {locked} with standoff distance"
-        elif openvocab:
-            action = f"Searching open-vocab target '{openvocab}'"
+        if openvocab:
+            action = f"Tracking open-vocab target '{openvocab}' with standoff orbit"
+        elif locked != "NONE":
+            action = f"Tracking beacon {locked} with standoff distance"
         else:
             action = "Seeking visual target beacon"
+        cat = "CHASE"
     elif mode == "AI_PATROL":
-        action = f"Cruise patrol on {scene.lower()}"
+        action = f"Autonomous perimeter cruise on {scene.lower()}"
+        cat = "PATROL"
     else:
         action = f"Manual operator teleop (cmd speed: {speed:.2f} rad/s)"
+        cat = "MANUAL"
 
-    log_line = f"[{t_str}] POS ({pos[0]:.2f}, {pos[1]:.2f}) | YAW {yaw:.1f}° | MODE: {mode} | Scene: {scene} — Action: {action}"
-
-    # Append to markdown file in project root
-    md_path = os.path.join(_root_dir, "mission_log.md")
-    write_header = not os.path.exists(md_path) or os.path.getsize(md_path) == 0
-    try:
-        with open(md_path, "a", encoding="utf-8") as f:
-            if write_header:
-                f.write("# 📋 Autonomous Mission Control — Telemetry & VLM Flight Log\n")
-                f.write("**Platform**: Webots R2025a | **Vision**: YOLOv8 + CLIP + Monocular Depth | **Modes**: AI_PATROL / AI_CHASE / MANUAL\n\n")
-                f.write("| Timestamp | Pose (X, Y, Yaw) | Mode | Scene & Perception | Tactical Action |\n")
-                f.write("|:---------:|:----------------:|:----:|:-------------------|:----------------|\n")
-            f.write(f"| `{t_str}` | `({pos[0]:.2f}, {pos[1]:.2f}, {yaw:.1f}°)` | **{mode}** | {scene} | {action} |\n")
-    except Exception as e:
-        print(f"[WARN] Error writing mission_log.md: {e}")
-
-    with STATE.lock:
-        STATE.mission_logs.append(log_line)
-        if len(STATE.mission_logs) > 50:
-            STATE.mission_logs = STATE.mission_logs[-50:]
+    log_mission_event(action, category=cat)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Background AI Worker Daemon Thread
+# Background AI Worker Daemon Thread (Throttled to 2Hz for Free-Tier CPU)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def ai_worker_loop():
     """
     Dedicated background AI engine running depth estimation, open-vocabulary grounding,
-    VLM goal planning, and mission flight logging asynchronously without blocking Webots.
+    VLM goal planning, and mission flight logging asynchronously without blocking 30Hz physics.
     """
-    print("✅ Background AI Worker Engine initialized (Purposes A, B, C, D active).")
+    print("✅ Background AI Worker Engine initialized (Purposes A, B, C, D active, throttled to 2Hz).")
+    last_infer_time = 0.0
     last_vlm_time = time.time()
     last_log_time = time.time()
 
     while not SHUTDOWN_EVENT.is_set():
+        now = time.time()
         with STATE.lock:
             frame_raw = STATE.frame_raw.copy() if STATE.frame_raw is not None else None
             openvocab_prompt = STATE.openvocab_prompt
@@ -552,7 +601,9 @@ def ai_worker_loop():
             do_vlm_trigger = STATE.trigger_vlm_flag
             STATE.trigger_vlm_flag = False
 
-        if frame_raw is not None:
+        # Throttle heavy AI inference to 2 Hz (every 0.5s) to prevent CPU starvation
+        if frame_raw is not None and (now - last_infer_time >= 0.5):
+            last_infer_time = now
             # 1. Purpose B: Monocular Depth & Low Obstacle Avoidance
             try:
                 depth_jpeg, haz_det, haz_score, l_mean, r_mean = compute_monocular_depth_and_hazard(frame_raw)
@@ -577,25 +628,23 @@ def ai_worker_loop():
                 with STATE.lock:
                     STATE.openvocab_target = None
 
-        now = time.time()
-
-        # 3. Purpose A: VLM Auto-Goal Planner (every 8s or triggered)
-        if do_vlm_trigger or (auto_goal and now - last_vlm_time >= 8.0):
+        # 3. Purpose A: VLM Auto-Goal Planner (every 12s or triggered)
+        if do_vlm_trigger or (auto_goal and now - last_vlm_time >= 12.0):
             try:
                 plan_vlm_goal()
             except Exception:
                 pass
             last_vlm_time = now
 
-        # 4. Purpose D: Automated Mission Logging & Captioning (every 5s)
-        if now - last_log_time >= 5.0:
+        # 4. Purpose D: Periodic Flight Log Caption (every 8s)
+        if now - last_log_time >= 8.0:
             try:
                 generate_mission_log_entry()
             except Exception:
                 pass
             last_log_time = now
 
-        time.sleep(0.04)
+        time.sleep(0.08)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # WebSocket Connection Manager
@@ -626,20 +675,613 @@ ws_manager = ConnectionManager()
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Webots Robot Control Thread
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Solid-Body Collision Physics & Arena Geometry Model
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ARENA_OBSTACLES = [
+    # (id, x, y, radius, label)
+    ("RED_CONE", 1.1, 0.9, 0.18, "Red Cone"),
+    ("GREEN_PLANT", -0.9, 1.1, 0.22, "Green Plant"),
+    ("BLUE_CHAIR", 0.0, -1.0, 0.24, "Blue Chair"),
+    ("CRATE_SW", -1.2, -1.2, 0.25, "Wooden Crate SW"),
+    ("CRATE_SE", 1.2, -1.1, 0.25, "Wooden Crate SE"),
+    ("HAZARD_BOX", 0.0, 0.2, 0.20, "Yellow Hazard Box"),
+]
+ROVER_RADIUS = 0.28   # effective collision radius (meters)
+ARENA_BOUND = 1.74    # perimeter solid wall boundary (meters)
+
+def resolve_rover_collisions(rx: float, ry: float) -> Tuple[float, float, bool]:
+    """
+    Enforces true solid-body radial collision pushback against all interior obstacles
+    and outer perimeter arena walls. Rover will NEVER pass through any object.
+    Returns (corrected_rx, corrected_ry, collision_occurred).
+    """
+    collided = False
+    for name, ox, oy, orad, label in ARENA_OBSTACLES:
+        dx = rx - ox
+        dy = ry - oy
+        dist = math.hypot(dx, dy)
+        min_dist = orad + ROVER_RADIUS
+        if dist < min_dist:
+            collided = True
+            if dist > 1e-4:
+                push = (min_dist - dist) + 0.005
+                rx += (dx / dist) * push
+                ry += (dy / dist) * push
+            else:
+                rx += min_dist
+    if rx < -ARENA_BOUND:
+        rx = -ARENA_BOUND; collided = True
+    elif rx > ARENA_BOUND:
+        rx = ARENA_BOUND; collided = True
+    if ry < -ARENA_BOUND:
+        ry = -ARENA_BOUND; collided = True
+    elif ry > ARENA_BOUND:
+        ry = ARENA_BOUND; collided = True
+
+    return rx, ry, collided
+
+def resolve_openvocab_coords(prompt: str, cur_rx: float, cur_ry: float) -> Tuple[float, float, str]:
+    """
+    Maps user or preset open-vocabulary prompt to exact ground-truth arena target coordinates.
+    """
+    p = prompt.lower().strip()
+    if any(k in p for k in ["chair", "blue", "workstation"]):
+        return (0.0, -1.0, "Blue Chair")
+    elif any(k in p for k in ["plant", "potted", "green", "flora"]):
+        return (-0.9, 1.1, "Green Plant")
+    elif any(k in p for k in ["cone", "traffic", "beacon", "red"]):
+        return (1.1, 0.9, "Red Cone")
+    elif any(k in p for k in ["hazard", "yellow", "toolbox", "cable", "danger"]):
+        return (0.0, 0.2, "Yellow Hazard Box")
+    elif any(k in p for k in ["crate", "box", "wooden", "container"]):
+        d_sw = math.hypot(cur_rx - (-1.2), cur_ry - (-1.2))
+        d_se = math.hypot(cur_rx - 1.2, cur_ry - (-1.1))
+        return (-1.2, -1.2, "Wooden Crate SW") if d_sw <= d_se else (1.2, -1.1, "Wooden Crate SE")
+    else:
+        best_obj = min(ARENA_OBSTACLES, key=lambda o: math.hypot(cur_rx - o[1], cur_ry - o[2]))
+        return (best_obj[1], best_obj[2], best_obj[4])
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Vibrant 3D Synthetic Camera Renderer (Cyber-Grid Floor & Shaded Obstacles)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def render_synthetic_arena(rx, ry, ryaw, targets):
+    """
+    Renders high-fidelity 3D synthetic camera frames with perspective cyber-grid,
+    horizon neon trim, 3D shaded arena objects (crates, hazard boxes, beacons),
+    and distance markers so feeds are rich, vibrant, and never look empty.
+    """
+    frame = np.zeros((CAM_H, CAM_W, 3), dtype=np.uint8)
+    horizon = CAM_H // 2 - 20 # 220
+
+    # 1. Ceiling & Distant Arena Walls Gradient
+    for y in range(0, horizon):
+        t = y / float(horizon)
+        b = int(32 + 25 * t)
+        g = int(22 + 18 * t)
+        r = int(14 + 14 * t)
+        frame[y, :] = (b, g, r)
+
+    # Distant Perimeter Wall Band along horizon
+    wall_top = max(0, horizon - 34)
+    frame[wall_top:horizon, :] = (65, 48, 38)
+    cv2.line(frame, (0, wall_top), (CAM_W, wall_top), (220, 180, 0), 1, cv2.LINE_AA)
+    cv2.line(frame, (0, horizon), (CAM_W, horizon), (255, 215, 0), 2, cv2.LINE_AA)
+
+    # 2. Cyber-Grid Perspective Floor
+    for y in range(horizon, CAM_H):
+        t = (y - horizon) / float(CAM_H - horizon)
+        b = int(45 + 35 * (t ** 1.1))
+        g = int(32 + 25 * (t ** 1.1))
+        r = int(22 + 18 * (t ** 1.1))
+        frame[y, :] = (b, g, r)
+
+    fov = math.radians(64.0)
+    focal = (CAM_W / 2.0) / math.tan(fov / 2.0)
+    cos_y, sin_y = math.cos(ryaw), math.sin(ryaw)
+
+    # Longitudinal and Transverse Perspective Cyber-Grid Lines
+    grid_coords = np.linspace(-2.0, 2.0, 11)
+    for gx in grid_coords:
+        pts = []
+        for gy in np.linspace(-2.0, 2.0, 25):
+            dx, dy = gx - rx, gy - ry
+            cx = dx * cos_y + dy * sin_y
+            cy = -dx * sin_y + dy * cos_y
+            if cx > 0.12:
+                sx = int(CAM_W / 2.0 - (cy / cx) * focal)
+                sy = int(horizon + (0.14 / cx) * focal)
+                if -150 <= sx <= CAM_W + 150 and horizon <= sy < CAM_H:
+                    pts.append((sx, sy))
+        if len(pts) >= 2:
+            cv2.polylines(frame, [np.array(pts, dtype=np.int32)], False, (140, 105, 40), 1, cv2.LINE_AA)
+
+    for gy in grid_coords:
+        pts = []
+        for gx in np.linspace(-2.0, 2.0, 25):
+            dx, dy = gx - rx, gy - ry
+            cx = dx * cos_y + dy * sin_y
+            cy = -dx * sin_y + dy * cos_y
+            if cx > 0.12:
+                sx = int(CAM_W / 2.0 - (cy / cx) * focal)
+                sy = int(horizon + (0.14 / cx) * focal)
+                if -150 <= sx <= CAM_W + 150 and horizon <= sy < CAM_H:
+                    pts.append((sx, sy))
+        if len(pts) >= 2:
+            cv2.polylines(frame, [np.array(pts, dtype=np.int32)], False, (140, 105, 40), 1, cv2.LINE_AA)
+
+    # Radar concentric distance rings on floor (0.6m, 1.2m)
+    for ring_r in [0.6, 1.2]:
+        ring_pts = []
+        for ang in np.linspace(-math.pi / 2, math.pi / 2, 24):
+            ox = rx + ring_r * math.cos(ryaw + ang)
+            oy = ry + ring_r * math.sin(ryaw + ang)
+            dx, dy = ox - rx, oy - ry
+            cx = dx * cos_y + dy * sin_y
+            cy = -dx * sin_y + dy * cos_y
+            if cx > 0.12:
+                sx = int(CAM_W / 2.0 - (cy / cx) * focal)
+                sy = int(horizon + (0.14 / cx) * focal)
+                if 0 <= sx < CAM_W and horizon <= sy < CAM_H:
+                    ring_pts.append((sx, sy))
+        if len(ring_pts) >= 3:
+            cv2.polylines(frame, [np.array(ring_pts, dtype=np.int32)], False, (90, 75, 45), 1, cv2.LINE_AA)
+
+    # 3. 3D Shaded Arena Objects
+    red_pos = targets.get("RED", (1.1, 0.9))
+    green_pos = targets.get("GREEN", (-0.9, 1.1))
+    blue_pos = targets.get("BLUE", (0.0, -1.0))
+
+    objects = [
+        {"name": "RED", "label": "Red Cone", "pos": red_pos, "color": (15, 20, 245), "h": 0.32, "w": 0.20, "shape": "cone"},
+        {"name": "GREEN", "label": "Green Plant", "pos": green_pos, "color": (25, 215, 45), "h": 0.38, "w": 0.26, "shape": "plant"},
+        {"name": "BLUE", "label": "Blue Chair", "pos": blue_pos, "color": (245, 120, 15), "h": 0.42, "w": 0.28, "shape": "chair"},
+        {"name": "CRATE_SW", "label": "Wooden Crate", "pos": (-1.2, -1.2), "color": (45, 90, 175), "h": 0.26, "w": 0.28, "shape": "crate"},
+        {"name": "CRATE_SE", "label": "Wooden Crate", "pos": (1.2, -1.1), "color": (45, 90, 175), "h": 0.26, "w": 0.28, "shape": "crate"},
+        {"name": "HAZARD_BOX", "label": "Hazard Box", "pos": (0.0, 0.2), "color": (0, 215, 255), "h": 0.16, "w": 0.28, "shape": "hazard_box"},
+    ]
+
+    render_list = []
+    for obj in objects:
+        ox, oy = obj["pos"]
+        dx, dy = ox - rx, oy - ry
+        cx = dx * cos_y + dy * sin_y
+        cy = -dx * sin_y + dy * cos_y
+        if cx > 0.16:
+            dist = math.hypot(dx, dy)
+            render_list.append((cx, cy, dist, obj))
+
+    # Painter's algorithm: render furthest first
+    render_list.sort(key=lambda item: item[0], reverse=True)
+
+    for cx, cy, dist, obj in render_list:
+        sx = int(CAM_W / 2.0 - (cy / cx) * focal)
+        sy_bot = int(horizon + (0.14 / cx) * focal)
+        pw = max(12, int((obj["w"] / cx) * focal))
+        ph = max(12, int((obj["h"] / cx) * focal))
+        sy_top = sy_bot - ph
+        x1, x2 = sx - pw // 2, sx + pw // 2
+
+        if x2 < -40 or x1 >= CAM_W + 40 or sy_bot < horizon - 20 or sy_top >= CAM_H:
+            continue
+
+        c = obj["color"]
+        shape = obj["shape"]
+
+        if shape == "cone":
+            cv2.ellipse(frame, (sx, sy_bot), (pw // 2 + 4, max(2, ph // 10)), 0, 0, 360, (20, 20, 20), -1)
+            cv2.rectangle(frame, (x1, sy_bot - max(2, ph // 12)), (x2, sy_bot), (30, 30, 30), -1)
+            pts = np.array([[sx, sy_top], [x1 + 2, sy_bot - max(2, ph // 12)], [x2 - 2, sy_bot - max(2, ph // 12)]], dtype=np.int32)
+            cv2.fillPoly(frame, [pts], c, cv2.LINE_AA)
+            y_stripe1 = sy_top + int(ph * 0.42)
+            y_stripe2 = sy_top + int(ph * 0.58)
+            w_s1 = int(pw * 0.42)
+            w_s2 = int(pw * 0.58)
+            stripe_pts = np.array([
+                [sx - w_s1 // 2, y_stripe1],
+                [sx + w_s1 // 2, y_stripe1],
+                [sx + w_s2 // 2, y_stripe2],
+                [sx - w_s2 // 2, y_stripe2],
+            ], dtype=np.int32)
+            cv2.fillPoly(frame, [stripe_pts], (255, 255, 255), cv2.LINE_AA)
+            cv2.polylines(frame, [pts], True, (15, 15, 120), 1, cv2.LINE_AA)
+
+        elif shape == "plant":
+            cv2.ellipse(frame, (sx, sy_bot), (pw // 2, max(2, ph // 8)), 0, 0, 360, (20, 20, 20), -1)
+            pot_h = max(6, ph // 3)
+            pot_w_top = int(pw * 0.7)
+            pot_w_bot = int(pw * 0.5)
+            pot_pts = np.array([
+                [sx - pot_w_top // 2, sy_bot - pot_h],
+                [sx + pot_w_top // 2, sy_bot - pot_h],
+                [sx + pot_w_bot // 2, sy_bot],
+                [sx - pot_w_bot // 2, sy_bot],
+            ], dtype=np.int32)
+            cv2.fillPoly(frame, [pot_pts], (35, 65, 140), cv2.LINE_AA)
+            cv2.rectangle(frame, (sx - pot_w_top // 2 - 2, sy_bot - pot_h - max(2, pot_h // 5)),
+                          (sx + pot_w_top // 2 + 2, sy_bot - pot_h), (25, 45, 110), -1)
+            fol_r = max(8, pw // 2)
+            cv2.circle(frame, (sx, sy_bot - pot_h - int(ph * 0.32)), fol_r, (15, 140, 25), -1, cv2.LINE_AA)
+            cv2.circle(frame, (sx - fol_r // 3, sy_bot - pot_h - int(ph * 0.38)), int(fol_r * 0.8), (25, 195, 40), -1, cv2.LINE_AA)
+            cv2.circle(frame, (sx + fol_r // 3, sy_bot - pot_h - int(ph * 0.38)), int(fol_r * 0.8), (35, 225, 50), -1, cv2.LINE_AA)
+            cv2.circle(frame, (sx, sy_bot - pot_h - int(ph * 0.48)), int(fol_r * 0.7), (45, 245, 65), -1, cv2.LINE_AA)
+
+        elif shape == "chair":
+            cv2.ellipse(frame, (sx, sy_bot), (pw // 2 + 2, max(2, ph // 10)), 0, 0, 360, (20, 20, 20), -1)
+            leg_h = int(ph * 0.45)
+            seat_y = sy_bot - leg_h
+            leg_w = max(2, pw // 14)
+            cv2.line(frame, (x1 + pw // 6, sy_bot), (x1 + pw // 5, seat_y), (140, 140, 150), leg_w, cv2.LINE_AA)
+            cv2.line(frame, (x2 - pw // 6, sy_bot), (x2 - pw // 5, seat_y), (140, 140, 150), leg_w, cv2.LINE_AA)
+            seat_h = max(4, ph // 8)
+            cv2.rectangle(frame, (x1 + 2, seat_y - seat_h), (x2 - 2, seat_y), (220, 100, 10), -1)
+            cv2.rectangle(frame, (x1 + 2, seat_y - seat_h), (x2 - 2, seat_y), (160, 60, 0), 1)
+            back_h = int(ph * 0.45)
+            cv2.rectangle(frame, (x1 + pw // 8, sy_top), (x2 - pw // 8, sy_top + back_h), (245, 120, 15), -1)
+            cv2.rectangle(frame, (x1 + pw // 8, sy_top), (x2 - pw // 8, sy_top + back_h), (180, 70, 0), 2)
+
+        elif shape == "crate":
+            cv2.ellipse(frame, (sx, sy_bot), (pw // 2 + 2, max(2, ph // 10)), 0, 0, 360, (20, 20, 20), -1)
+            cv2.rectangle(frame, (x1, sy_top), (x2, sy_bot), c, -1)
+            cv2.rectangle(frame, (x1, sy_top), (x2, sy_bot), (25, 55, 115), 2)
+            for py in np.linspace(sy_top, sy_bot, 4)[1:-1]:
+                cv2.line(frame, (x1, int(py)), (x2, int(py)), (30, 65, 130), 1, cv2.LINE_AA)
+            cv2.line(frame, (x1 + 2, sy_top + 2), (x2 - 2, sy_bot - 2), (30, 65, 130), 2, cv2.LINE_AA)
+            cv2.line(frame, (x1 + 2, sy_bot - 2), (x2 - 2, sy_top + 2), (30, 65, 130), 2, cv2.LINE_AA)
+
+        elif shape == "hazard_box":
+            cv2.ellipse(frame, (sx, sy_bot), (pw // 2 + 2, max(2, ph // 10)), 0, 0, 360, (20, 20, 20), -1)
+            cv2.rectangle(frame, (x1, sy_top), (x2, sy_bot), c, -1)
+            cv2.rectangle(frame, (x1, sy_top), (x2, sy_bot), (20, 20, 20), 2)
+            stripe_step = max(6, pw // 5)
+            for oxs in range(x1 - pw, x2 + pw, stripe_step):
+                pts = np.array([
+                    [oxs, sy_bot],
+                    [oxs + stripe_step // 2, sy_bot],
+                    [oxs + stripe_step // 2 + ph, sy_top],
+                    [oxs + ph, sy_top]
+                ], dtype=np.int32)
+                cv2.fillPoly(frame, [pts], (20, 20, 20))
+            cv2.rectangle(frame, (x1, sy_top), (x2, sy_bot), (20, 20, 20), 2)
+            cv2.rectangle(frame, (sx - max(4, pw // 8), sy_top - max(3, ph // 6)),
+                          (sx + max(4, pw // 8), sy_top), (40, 40, 40), -1)
+
+        # Distance tag above object
+        label_text = f"{obj['name']} ({dist:.1f}m)"
+        t_sz, _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
+        lx1 = sx - t_sz[0] // 2 - 4
+        ly1 = max(18, sy_top - 18)
+        cv2.rectangle(frame, (lx1, ly1), (lx1 + t_sz[0] + 8, ly1 + 14), (20, 25, 35), -1)
+        cv2.rectangle(frame, (lx1, ly1), (lx1 + t_sz[0] + 8, ly1 + 14), c, 1)
+        cv2.putText(frame, label_text, (lx1 + 4, ly1 + 11), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1, cv2.LINE_AA)
+
+    return frame
+
+
+def synthetic_simulation_loop():
+    """
+    30Hz High-Fidelity Synthetic Simulation Engine:
+    - Real-time differential drive kinematics with solid-body collision pushback
+    - Proportional target pursuit (Open-Vocab, VLM Auto-Goal, AI_CHASE, AI_PATROL)
+    - Standoff inspection orbits (0.45m)
+    - Obstacle collision avoidance without 0.00 speed lockups
+    """
+    ensure_ai_models()
+    print("🚀 Starting 30Hz Synthetic Physics & 3D Arena Vision Loop (ZeroGPU Cloud Mode)...")
+    rx, ry, ryaw = 0.0, 0.0, 0.4
+    frame_count = 0
+    standoff_logged = False
+    avoidance_active = False
+    patrol_wp_idx = 0
+    PATROL_WAYPOINTS = [(1.1, 0.8), (1.1, -0.9), (-1.1, -0.9), (-1.1, 0.9), (0.0, 0.0)]
+
+    cur_semantic_scene = "Clear Open Floor"
+    cur_semantic_score = 0.95
+
+    target_positions = {
+        "RED": (1.1, 0.9),
+        "GREEN": (-0.9, 1.1),
+        "BLUE": (0.0, -1.0),
+    }
+
+    dt = TIMESTEP / 1000.0
+
+    while not SHUTDOWN_EVENT.is_set():
+        t_start = time.time()
+        frame_count += 1
+
+        # Check drag queue
+        with STATE.lock:
+            drags = list(STATE.drag_queue)
+            STATE.drag_queue.clear()
+
+        for tname, tx, ty, tz in drags:
+            if tname in target_positions:
+                clamped_x = max(-1.6, min(1.6, tx))
+                clamped_y = max(-1.6, min(1.6, ty))
+                target_positions[tname] = (clamped_x, clamped_y)
+                with STATE.lock:
+                    STATE.target_positions[tname] = (clamped_x, clamped_y)
+
+        # 1. Dynamic Sensor Modeling (Walls & Obstacles ahead)
+        cos_y = math.cos(ryaw)
+        sin_y = math.sin(ryaw)
+        dist_wall = min(ARENA_BOUND - abs(rx), ARENA_BOUND - abs(ry))
+        ps_l = max(0.0, (0.45 - dist_wall) * 950.0) if dist_wall < 0.45 else 0.0
+        ps_r = ps_l
+
+        for name, ox, oy, orad, label in ARENA_OBSTACLES:
+            dx = ox - rx
+            dy = oy - ry
+            fwd_dist = dx * cos_y + dy * sin_y
+            lat_dist = -dx * sin_y + dy * cos_y
+            if 0.05 < fwd_dist < (0.75 + orad) and abs(lat_dist) < (0.45 + orad):
+                prox = max(0.0, ((0.75 + orad) - fwd_dist) * 1100.0)
+                if lat_dist < 0:
+                    ps_l += prox * 1.2
+                    ps_r += prox * 0.3
+                else:
+                    ps_r += prox * 1.2
+                    ps_l += prox * 0.3
+
+        ps_l = min(1000.0, ps_l)
+        ps_r = min(1000.0, ps_r)
+
+        # Render vibrant 3D synthetic camera frame
+        frame = render_synthetic_arena(rx, ry, ryaw, target_positions)
+
+        with STATE.lock:
+            STATE.frame_raw = frame.copy()
+            mode = STATE.mode
+            manual_cmd = STATE.manual_cmd
+            do_teleport = STATE.teleport_flag
+            STATE.teleport_flag = False
+            openvocab_prompt = STATE.openvocab_prompt
+            auto_goal = STATE.auto_goal_vlm
+            preferred_target = STATE.preferred_target
+            depth_obstacle_detected = STATE.depth_obstacle_detected
+            depth_l_mean = STATE.depth_left_mean
+            depth_r_mean = STATE.depth_right_mean
+
+        if do_teleport:
+            rx, ry, ryaw = 0.0, 0.0, 0.0
+            with STATE.lock:
+                STATE.trail.clear()
+            log_mission_event("Robot teleport reset to arena origin (0.0, 0.0)", category="TELEPORT")
+
+        # 2. Multi-Target Optical & HSV Tracker
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        detected_hsv = {}
+        best_target = None
+        best_area = 0
+        best_cx = CAM_W // 2
+
+        for tname, tdata in HSV_TARGETS.items():
+            mask = cv2.inRange(hsv, tdata["lower"], tdata["upper"])
+            if "lower2" in tdata:
+                mask |= cv2.inRange(hsv, tdata["lower2"], tdata["upper2"])
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                c = max(contours, key=cv2.contourArea)
+                area = int(cv2.contourArea(c))
+                if area > 160:
+                    x, y, w, h = cv2.boundingRect(c)
+                    cx, cy = x + w // 2, y + h // 2
+                    color = tdata["color"]
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                    cv2.drawMarker(frame, (cx, cy), color, cv2.MARKER_CROSS, 16, 2)
+                    cv2.putText(frame, f"[LOCKED: {tname} TARGET] A={area}", (x, max(y - 8, 42)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                    detected_hsv[tname] = {"cx": cx, "cy": cy, "area": area}
+                    if area > best_area:
+                        best_area = area
+                        best_target = tname
+                        best_cx = cx
+
+        # 3. Target Navigation Resolution Hierarchy
+        target_tx, target_ty, target_label = 0.0, 0.0, ""
+        nav_mode = "NONE"
+
+        # Priority 1: Open-Vocab Prompt Active
+        if openvocab_prompt:
+            nav_mode = "OPENVOCAB"
+            target_tx, target_ty, target_label = resolve_openvocab_coords(openvocab_prompt, rx, ry)
+            best_target = f"OPENVOCAB:{openvocab_prompt.upper()}"
+            # Project open-vocab target onto camera HUD
+            dx_t, dy_t = target_tx - rx, target_ty - ry
+            cx_t = dx_t * cos_y + dy_t * sin_y
+            cy_t = -dx_t * sin_y + dy_t * cos_y
+            if cx_t > 0.16:
+                sx_t = int(CAM_W / 2.0 - (cy_t / cx_t) * focal)
+                sy_bot_t = int((CAM_H // 2 - 20) + (0.14 / cx_t) * focal)
+                pw_t = max(24, int((0.30 / cx_t) * focal))
+                ph_t = max(24, int((0.36 / cx_t) * focal))
+                sy_top_t = sy_bot_t - ph_t
+                x1_t, x2_t = sx_t - pw_t // 2, sx_t + pw_t // 2
+                cv2.rectangle(frame, (x1_t, sy_top_t), (x2_t, sy_bot_t), (255, 0, 255), 2)
+                cv2.drawMarker(frame, (sx_t, sy_bot_t - ph_t // 2), (255, 0, 255), cv2.MARKER_CROSS, 20, 2)
+                dist_t = math.hypot(dx_t, dy_t)
+                cv2.putText(frame, f"[OPEN-VOCAB LOCKED: {openvocab_prompt.upper()}] D={dist_t:.2f}m",
+                            (max(8, x1_t), max(sy_top_t - 8, 38)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 0, 255), 1, cv2.LINE_AA)
+                best_cx = sx_t
+                best_area = pw_t * ph_t
+                with STATE.lock:
+                    STATE.openvocab_target = {
+                        "box": [x1_t, sy_top_t, x2_t, sy_bot_t],
+                        "cx": sx_t, "cy": sy_bot_t - ph_t // 2,
+                        "area": pw_t * ph_t, "score": 0.94, "label": openvocab_prompt
+                    }
+
+        # Priority 2: VLM Auto-Goal ON
+        elif auto_goal:
+            nav_mode = "VLM"
+            vlm_idx = (vlm_cycle_index - 1) % len(VLM_TARGET_CATALOG)
+            vlm_item = VLM_TARGET_CATALOG[vlm_idx]
+            target_tx, target_ty = vlm_item["coords"]
+            target_label = vlm_item["name"]
+            best_target = f"VLM:{vlm_item['name']}"
+
+        # Priority 3: AI_CHASE Mode Selected Manually
+        elif mode == ControlMode.AI_CHASE:
+            nav_mode = "CHASE"
+            if preferred_target in target_positions:
+                target_tx, target_ty = target_positions[preferred_target]
+                target_label = preferred_target
+            elif best_target in target_positions:
+                target_tx, target_ty = target_positions[best_target]
+                target_label = best_target
+            else:
+                closest_beacon = min(["RED", "GREEN", "BLUE"], key=lambda k: math.hypot(rx - target_positions[k][0], ry - target_positions[k][1]))
+                target_tx, target_ty = target_positions[closest_beacon]
+                target_label = closest_beacon
+            best_target = target_label
+
+        # Priority 4: AI_PATROL Mode
+        elif mode == ControlMode.AI_PATROL:
+            nav_mode = "PATROL"
+            target_tx, target_ty = PATROL_WAYPOINTS[patrol_wp_idx]
+            target_label = f"Waypoint {patrol_wp_idx+1}"
+            best_target = "PATROL"
+
+        # 4. Proportional Driving & Obstacle Avoidance Steering
+        left_v, right_v = 0.0, 0.0
+
+        if mode == ControlMode.MANUAL:
+            if manual_cmd == "FORWARD": left_v = right_v = MAX_SPEED * 0.70
+            elif manual_cmd == "BACKWARD": left_v = right_v = -MAX_SPEED * 0.55
+            elif manual_cmd == "LEFT": left_v, right_v = -MAX_SPEED * 0.42, MAX_SPEED * 0.42
+            elif manual_cmd == "RIGHT": left_v, right_v = MAX_SPEED * 0.42, -MAX_SPEED * 0.42
+            else: left_v = right_v = 0.0
+
+        else:
+            # Autonomous Steering Engine
+            dist_to_target = math.hypot(target_tx - rx, target_ty - ry)
+            angle_to_target = math.atan2(target_ty - ry, target_tx - rx)
+            yaw_err = (angle_to_target - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+
+            # Check Standoff Inspection Arrival (0.45m)
+            is_standoff_target = nav_mode in ["OPENVOCAB", "VLM", "CHASE"]
+            standoff_threshold = 0.48
+
+            if is_standoff_target and dist_to_target <= standoff_threshold:
+                if not standoff_logged:
+                    log_mission_event(f"Target standoff orbit established at 0.45m for {target_label}", category="NAV")
+                    standoff_logged = True
+                    if auto_goal:
+                        # Advance to next VLM goal
+                        plan_vlm_goal()
+
+                # Smooth circular standoff inspection orbit
+                orbit_tangent = angle_to_target + (math.pi / 2.0)
+                orbit_err = (orbit_tangent - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+                left_v = 2.4 - orbit_err * 1.6
+                right_v = 2.4 + orbit_err * 1.6
+                cv2.putText(frame, f"[STANDOFF ORBIT: {target_label}] DIST={dist_to_target:.2f}m", (8, 48),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 2)
+
+            elif nav_mode == "PATROL" and dist_to_target < 0.35:
+                # Advance patrol perimeter waypoint
+                patrol_wp_idx = (patrol_wp_idx + 1) % len(PATROL_WAYPOINTS)
+                standoff_logged = False
+
+            else:
+                standoff_logged = False
+                # Obstacle Avoidance: Decisive differential turn without 0.00 speed freeze
+                obstacle_hazard = (max(ps_l, ps_r) > 380) or depth_obstacle_detected
+
+                if obstacle_hazard:
+                    if ps_l >= ps_r or (depth_obstacle_detected and depth_l_mean > depth_r_mean):
+                        # Obstacle on left or wall ahead -> decisive smooth turn RIGHT
+                        left_v = 4.2
+                        right_v = -2.8
+                    else:
+                        # Obstacle on right -> decisive smooth turn LEFT
+                        left_v = -2.8
+                        right_v = 4.2
+
+                    if not avoidance_active:
+                        log_mission_event(f"Obstacle clearance avoidance active (PS_L={ps_l:.0f}, PS_R={ps_r:.0f})", category="AVOID")
+                        avoidance_active = True
+                else:
+                    avoidance_active = False
+                    # Proportional Pursuit toward Target
+                    fwd = MAX_SPEED * 0.72 * max(0.20, math.cos(yaw_err))
+                    turn = max(-MAX_SPEED * 0.65, min(MAX_SPEED * 0.65, yaw_err * 2.2))
+                    left_v = max(-MAX_SPEED, min(MAX_SPEED, fwd - turn))
+                    right_v = max(-MAX_SPEED, min(MAX_SPEED, fwd + turn))
+
+        # 5. Differential Drive Kinematics & Solid-Body Collision Pushback
+        v_lin = ((left_v + right_v) / (2.0 * MAX_SPEED)) * 0.42
+        omega = ((right_v - left_v) / (2.0 * MAX_SPEED)) * 1.65
+        ryaw = (ryaw + omega * dt + math.pi) % (2.0 * math.pi) - math.pi
+        rx = rx + v_lin * math.cos(ryaw) * dt
+        ry = ry + v_lin * math.sin(ryaw) * dt
+
+        # Enforce hard radial collision pushback
+        rx, ry, _ = resolve_rover_collisions(rx, ry)
+        yaw_deg = math.degrees(ryaw)
+
+        # 6. Periodic Scene Classification (Throttled)
+        if CLIP_AVAILABLE and frame_count % 30 == 0:
+            try:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(rgb_frame)
+                img_tensor = clip_preprocess(pil_img).unsqueeze(0).to(CLIP_DEVICE)
+                with torch.no_grad():
+                    img_features = clip_model.encode_image(img_tensor)
+                    img_features /= img_features.norm(dim=-1, keepdim=True)
+                    sim = (100.0 * img_features @ clip_text_features.T).softmax(dim=-1)
+                    probs = sim[0].cpu().numpy()
+                top_idx = int(np.argmax(probs))
+                raw_prompt = CLIP_PROMPTS[top_idx]
+                cur_semantic_scene = CLIP_DISPLAY_MAP.get(raw_prompt, raw_prompt)
+                cur_semantic_score = float(probs[top_idx])
+            except Exception:
+                pass
+
+        # HUD Overlay Banner
+        mode_color = {"AI_PATROL": (0, 220, 220), "AI_CHASE": (0, 60, 255), "MANUAL": (240, 200, 0)}
+        cv2.putText(frame, f"MODE: {mode.value}", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                    mode_color.get(mode.value, (255, 255, 255)), 2)
+        cv2.drawMarker(frame, (CAM_W // 2, CAM_H // 2), (0, 255, 255), cv2.MARKER_CROSS, 18, 1)
+        cv2.putText(frame, f"CLIP: {cur_semantic_scene.upper()} ({cur_semantic_score:.2f})", (8, CAM_H - 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 255), 1, cv2.LINE_AA)
+
+        _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+
+        with STATE.lock:
+            STATE.frame_jpeg = jpeg.tobytes()
+            STATE.pos = [round(rx, 3), round(ry, 3), 0.06]
+            STATE.orientation = round(ryaw, 3)
+            STATE.yaw_deg = round(yaw_deg, 1)
+            STATE.left_speed = round(left_v, 2)
+            STATE.right_speed = round(right_v, 2)
+            STATE.ps_left_val = round(ps_l, 1)
+            STATE.ps_right_val = round(ps_r, 1)
+            STATE.locked_target = best_target if best_target else "NONE"
+            STATE.steer_error = round(best_cx - CAM_W // 2, 1) if best_target else 0.0
+            STATE.semantic_scene = cur_semantic_scene
+            STATE.semantic_score = cur_semantic_score
+            STATE.trail.append((rx, ry))
+            if len(STATE.trail) > 500:
+                STATE.trail = STATE.trail[-500:]
+
+        elapsed = time.time() - t_start
+        time.sleep(max(0.005, dt - elapsed))
+
+
 def webots_loop():
     if not WEBOTS_AVAILABLE or Supervisor is None:
-        print("[WARN] Webots Supervisor controller library unavailable. webots_loop standing by...")
-        while not SHUTDOWN_EVENT.is_set():
-            time.sleep(1)
+        print("[WARN] Webots Supervisor controller library unavailable. Launching active synthetic 3D arena loop...")
+        synthetic_simulation_loop()
         return
 
     try:
         robot = Supervisor()
         print("✅ Connected to Webots R2025a Supervisor!")
     except Exception as exc:
-        print(f"[WARN] Failed to connect to Webots Supervisor ({exc}). webots_loop standing by...")
-        while not SHUTDOWN_EVENT.is_set():
-            time.sleep(1)
+        print(f"[WARN] Failed to connect to Webots Supervisor ({exc}). Launching active synthetic 3D arena loop...")
+        synthetic_simulation_loop()
         return
     timestep = int(robot.getBasicTimeStep())
 
@@ -1126,6 +1768,19 @@ def webots_loop():
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # WebSocket Telemetry Broadcaster (runs in background asyncio task)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_ws_broadcast_task: Optional[asyncio.Task] = None
+
+def ensure_ws_broadcast():
+    """Idempotently starts ws_broadcast_loop in the active running asyncio loop."""
+    global _ws_broadcast_task
+    if _ws_broadcast_task is None or _ws_broadcast_task.done():
+        try:
+            loop = asyncio.get_running_loop()
+            _ws_broadcast_task = loop.create_task(ws_broadcast_loop())
+            print("✅ WebSocket broadcast loop active (30Hz telemetry).")
+        except RuntimeError:
+            pass
+
 async def ws_broadcast_loop():
     """Broadcasts telemetry state at ~30 Hz to all connected WebSocket clients."""
     try:
@@ -1175,6 +1830,7 @@ def start_background_threads():
         if _THREADS_STARTED:
             return
         _THREADS_STARTED = True
+        ensure_ai_models()
         ai_thread = threading.Thread(target=ai_worker_loop, daemon=True, name="AIWorkerThread")
         ai_thread.start()
         t = threading.Thread(target=webots_loop, daemon=True, name="WebotsLoopThread")
@@ -1187,14 +1843,16 @@ def start_background_threads():
 @asynccontextmanager
 async def lifespan(app):
     start_background_threads()
-    task = asyncio.create_task(ws_broadcast_loop())
+    ensure_ws_broadcast()
     yield
     SHUTDOWN_EVENT.set()
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    global _ws_broadcast_task
+    if _ws_broadcast_task and not _ws_broadcast_task.done():
+        _ws_broadcast_task.cancel()
+        try:
+            await _ws_broadcast_task
+        except asyncio.CancelledError:
+            pass
     for conn in list(ws_manager.active_connections):
         try:
             await conn.close()
@@ -1215,6 +1873,7 @@ app.add_middleware(
 # ── WebSocket Endpoint ──
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    ensure_ws_broadcast()
     await ws_manager.connect(websocket)
     try:
         while True:
@@ -1372,6 +2031,7 @@ def set_mode(mode: str):
     with STATE.lock:
         STATE.mode = m
         STATE.manual_cmd = "STOP"
+    log_mission_event(f"Control mode changed to {m.value}", category="MODE")
     return {"mode": m.value}
 
 @app.post("/manual/{cmd}")
@@ -1390,13 +2050,20 @@ def teleport_reset():
 @app.post("/trigger_vlm_goal")
 def trigger_vlm_goal_endpoint():
     inst, target = plan_vlm_goal()
+    with STATE.lock:
+        STATE.mode = ControlMode.AI_CHASE
     return {"instruction": inst, "preferred_target": target}
 
 @app.post("/set_vlm_goal_mode/{enabled}")
 def set_vlm_goal_mode(enabled: str):
-    val = enabled.lower() in ["true", "1", "yes"]
+    val = enabled.lower() in ["true", "1", "yes", "on"]
     with STATE.lock:
         STATE.auto_goal_vlm = val
+        if val:
+            STATE.mode = ControlMode.AI_CHASE
+    if val:
+        plan_vlm_goal()
+    log_mission_event(f"VLM Auto-Goal mode set to {'ON' if val else 'OFF'}", category="VLM")
     return {"auto_goal_vlm": val}
 
 # ── Purpose C: Open-Vocabulary Prompt Endpoint ──
@@ -1416,8 +2083,11 @@ async def set_openvocab_prompt_endpoint(request: Request):
         if prompt.lower() in ["clear", "none", ""]:
             STATE.openvocab_prompt = ""
             STATE.openvocab_target = None
+            log_mission_event("Open-vocabulary target cleared", category="VLM")
         else:
             STATE.openvocab_prompt = prompt
+            STATE.mode = ControlMode.AI_CHASE
+            log_mission_event(f"Open-vocab target locked: '{prompt}' (switching to AI_CHASE)", category="VLM")
     return {"openvocab_prompt": STATE.openvocab_prompt}
 
 # ── Purpose D: Automated Mission Logs Endpoints ──
@@ -1594,8 +2264,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* Mission Log Terminal */
   .log-terminal {
     background: #080c14; border: 1px solid #1a2540; border-radius: 8px;
-    height: 140px; overflow-y: auto; padding: 10px; font-family: 'Monaco', 'Courier New', monospace;
+    height: 160px; overflow-y: auto; overflow-x: hidden; padding: 10px; font-family: 'Monaco', 'Courier New', monospace;
     font-size: 0.72rem; color: #76ff03; line-height: 1.5; margin: 0 12px 12px;
+    word-break: break-word; white-space: pre-wrap;
   }
   .log-line { margin-bottom: 4px; }
   .log-line.system { color: #00e5ff; }
@@ -1676,7 +2347,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             <span style="color:#76ff03;">640x480@95%</span>
           </div>
           <div class="video-wrap">
-            <img id="videoFeed" src="/video_feed" alt="Live Camera Feed">
+            <img id="videoFeed" src="/video_frame.jpg" alt="Live Camera Feed">
             <div class="mode-badge" id="modeBadge" style="background:var(--accent)">AI_PATROL</div>
             <div class="scene-badge" id="sceneBadge">Semantic Scene: Clear Open Floor (95%)</div>
           </div>
@@ -1688,7 +2359,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             <span style="color:var(--magenta);">MAGMA COLORMAP</span>
           </div>
           <div class="video-wrap">
-            <img id="depthFeed" src="/depth_feed" alt="Monocular Depth Feed">
+            <img id="depthFeed" src="/depth_frame.jpg" alt="Monocular Depth Feed">
             <div class="hazard-badge" id="depthHazardBadge" style="display:none;">⚠️ LOW OBSTACLE HAZARD</div>
           </div>
         </div>
@@ -1708,6 +2379,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <button class="chip" onclick="setVocab('yellow hazard box')">⚠️ yellow hazard box</button>
           <button class="chip" onclick="setVocab('potted plant')">🪴 potted plant</button>
           <button class="chip" onclick="setVocab('blue chair')">🪑 blue chair</button>
+          <button class="chip" onclick="setVocab('red cone')">🔺 red cone</button>
         </div>
 
         <div class="ai-box-title" style="margin-top:6px; color:var(--accent);">🧭 PURPOSE A: DYNAMIC VLM GOAL SELECTION</div>
@@ -1812,6 +2484,7 @@ async function submitVocab() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({prompt: prompt})
   });
+  if (prompt) setMode('AI_CHASE');
 }
 
 async function setVocab(prompt) {
@@ -1821,6 +2494,7 @@ async function setVocab(prompt) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({prompt: prompt})
   });
+  if (prompt) setMode('AI_CHASE');
 }
 
 // Purpose A: VLM Auto-Goal Trigger & Toggle
@@ -1830,6 +2504,7 @@ async function toggleVlm() {
   const btn = document.getElementById('btnVlmToggle');
   btn.textContent = autoGoalVlm ? '🧭 VLM Auto-Goal: ON' : '🧭 VLM Auto-Goal: OFF';
   btn.classList.toggle('active', autoGoalVlm);
+  if (autoGoalVlm) setMode('AI_CHASE');
 }
 
 async function triggerVlm() {
@@ -1838,6 +2513,7 @@ async function triggerVlm() {
   if (data.instruction) {
     document.getElementById('vlmInstruction').textContent = data.instruction;
   }
+  setMode('AI_CHASE');
 }
 
 // Keyboard WASD
@@ -1865,9 +2541,11 @@ document.addEventListener('keyup', e => {
 const radarCanvas = document.getElementById('radar');
 const ctx = radarCanvas.getContext('2d');
 const TARGETS = [
-  {name:'R', x:0.9, y:0.7, color:'#ff1744'},
-  {name:'G', x:-0.8, y:0.8, color:'#76ff03'},
-  {name:'B', x:0.0, y:-0.9, color:'#448aff'},
+  {name:'R', x:1.1, y:0.9, color:'#ff1744'},
+  {name:'G', x:-0.9, y:1.1, color:'#76ff03'},
+  {name:'B', x:0.0, y:-1.0, color:'#448aff'},
+  {name:'CR', x:-1.2, y:-1.2, color:'#a67234'},
+  {name:'HZ', x:0.0, y:0.2, color:'#ffd600'},
 ];
 
 function drawRadar(data) {
@@ -2036,6 +2714,40 @@ async function poll() {
   } catch(e) {}
 }
 setInterval(poll, 200);
+
+// Non-blocking double-buffered snapshot polling for RGB and Depth viewports (120ms)
+function pollVideoFeed() {
+  const img = new Image();
+  const startTime = Date.now();
+  img.onload = () => {
+    const el = document.getElementById('videoFeed');
+    if (el) el.src = img.src;
+    const elapsed = Date.now() - startTime;
+    setTimeout(pollVideoFeed, Math.max(20, 120 - elapsed));
+  };
+  img.onerror = () => {
+    setTimeout(pollVideoFeed, 300);
+  };
+  img.src = '/video_frame.jpg?t=' + Date.now();
+}
+
+function pollDepthFeed() {
+  const img = new Image();
+  const startTime = Date.now();
+  img.onload = () => {
+    const el = document.getElementById('depthFeed');
+    if (el) el.src = img.src;
+    const elapsed = Date.now() - startTime;
+    setTimeout(pollDepthFeed, Math.max(20, 120 - elapsed));
+  };
+  img.onerror = () => {
+    setTimeout(pollDepthFeed, 300);
+  };
+  img.src = '/depth_frame.jpg?t=' + Date.now();
+}
+
+pollVideoFeed();
+pollDepthFeed();
 </script>
 </body>
 </html>"""
@@ -2220,7 +2932,7 @@ AFRAME.registerComponent('drag-drop-target', {
 
   <!-- DRAGGABLE TARGET BEACONS -->
   <!-- RED TRAFFIC BEACON -->
-  <a-entity id="red-beacon" class="drag-target" drag-drop-target="targetName: RED" position="0.9 0 -0.7">
+  <a-entity id="red-beacon" class="drag-target" drag-drop-target="targetName: RED" position="1.1 0 -0.9">
     <a-cylinder radius="0.09" height="0.02" position="0 0.01 0" material="color: #222222; roughness: 0.8"></a-cylinder>
     <a-cone radius-bottom="0.075" radius-top="0.015" height="0.26" position="0 0.14 0" material="color: #e51e1e; roughness: 0.4"></a-cone>
     <a-cylinder radius="0.05" height="0.03" position="0 0.13 0" material="color: #ffffff; roughness: 0.3"></a-cylinder>
@@ -2231,7 +2943,7 @@ AFRAME.registerComponent('drag-drop-target', {
   </a-entity>
 
   <!-- GREEN POTTED PLANT -->
-  <a-entity id="green-plant" class="drag-target" drag-drop-target="targetName: GREEN" position="-0.8 0 -0.8">
+  <a-entity id="green-plant" class="drag-target" drag-drop-target="targetName: GREEN" position="-0.9 0 -1.1">
     <a-cylinder radius="0.08" height="0.14" position="0 0.07 0" material="color: #7a4820; roughness: 0.8"></a-cylinder>
     <a-sphere radius="0.14" position="0 0.24 0" material="color: #1e8220; roughness: 0.6"></a-sphere>
     <a-sphere radius="0.10" position="0.05 0.32 0.03" material="color: #2da430; roughness: 0.6"></a-sphere>
@@ -2241,7 +2953,7 @@ AFRAME.registerComponent('drag-drop-target', {
   </a-entity>
 
   <!-- BLUE LAB CHAIR -->
-  <a-entity id="blue-chair" class="drag-target" drag-drop-target="targetName: BLUE" position="0 0 0.9">
+  <a-entity id="blue-chair" class="drag-target" drag-drop-target="targetName: BLUE" position="0 0 1.0">
     <a-cylinder radius="0.015" height="0.24" position="-0.1 0.12 0.1" material="color: #9a9ea3; roughness: 0.3; metalness: 0.7"></a-cylinder>
     <a-cylinder radius="0.015" height="0.24" position="0.1 0.12 0.1" material="color: #9a9ea3; roughness: 0.3; metalness: 0.7"></a-cylinder>
     <a-cylinder radius="0.015" height="0.24" position="-0.1 0.12 -0.1" material="color: #9a9ea3; roughness: 0.3; metalness: 0.7"></a-cylinder>
@@ -2253,27 +2965,26 @@ AFRAME.registerComponent('drag-drop-target', {
             material="color: #448aff; emissive: #448aff; opacity: 0.0; transparent: true; side: double"></a-ring>
   </a-entity>
 
-  <!-- WOODEN CRATES (corners) -->
-  <a-entity position="1.6 0.1 -1.6">
-    <a-box width="0.25" height="0.2" depth="0.25" material="color: #a67234; roughness: 0.7"></a-box>
+  <!-- WOODEN CRATES -->
+  <a-entity position="1.2 0.13 1.1">
+    <a-box width="0.28" height="0.26" depth="0.28" material="color: #a67234; roughness: 0.7"></a-box>
+    <a-text value="WOODEN CRATE SE" position="0 0.22 0" align="center" color="#e0a0ff" width="1.2" font="monoid"></a-text>
   </a-entity>
-  <a-entity position="-1.55 0.09 1.55">
-    <a-box width="0.22" height="0.18" depth="0.22" material="color: #946633; roughness: 0.72"></a-box>
+  <a-entity position="-1.2 0.13 1.2">
+    <a-box width="0.28" height="0.26" depth="0.28" material="color: #946633; roughness: 0.72"></a-box>
+    <a-text value="WOODEN CRATE SW" position="0 0.22 0" align="center" color="#e0a0ff" width="1.2" font="monoid"></a-text>
   </a-entity>
 
   <!-- LOW-PROFILE OBSTACLES (PURPOSE B) -->
-  <!-- LOW CABLE BOX (floor hazard) -->
-  <a-entity position="0.35 0.018 0.25">
-    <a-box width="0.28" height="0.035" depth="0.14" material="color: #ffd600; roughness: 0.6"></a-box>
-    <a-box width="0.06" height="0.036" depth="0.142" position="-0.07 0 0" material="color: #111111; roughness: 0.8"></a-box>
-    <a-box width="0.06" height="0.036" depth="0.142" position="0.07 0 0" material="color: #111111; roughness: 0.8"></a-box>
-    <a-text value="LOW CABLE BOX" position="0 0.12 0" align="center" color="#ffd600" width="1.1" font="monoid"></a-text>
+  <!-- YELLOW HAZARD BOX -->
+  <a-entity position="0 0.08 -0.2">
+    <a-box width="0.28" height="0.16" depth="0.20" material="color: #ffd600; roughness: 0.5"></a-box>
+    <a-text value="YELLOW HAZARD BOX" position="0 0.18 0" align="center" color="#ffd600" width="1.1" font="monoid"></a-text>
   </a-entity>
 
-  <!-- SMALL TOOLBOX (floor hazard) -->
+  <!-- SMALL TOOLBOX -->
   <a-entity position="-0.35 0.02 -0.25">
     <a-box width="0.22" height="0.04" depth="0.14" material="color: #ff6d00; roughness: 0.5"></a-box>
-    <a-box width="0.222" height="0.015" depth="0.04" position="0 0.02 0" material="color: #37474f; roughness: 0.7"></a-box>
     <a-cylinder radius="0.008" height="0.08" position="0 0.035 0" rotation="0 0 90" material="color: #cfd8dc; metalness: 0.8"></a-cylinder>
     <a-text value="SMALL TOOLBOX" position="0 0.12 0" align="center" color="#ff6d00" width="1.1" font="monoid"></a-text>
   </a-entity>
@@ -2525,10 +3236,24 @@ function toggleView() {
   }
 }
 
-// ── Refresh Dual Hologram Video Textures (RGB + Depth) ──
-function refreshTextures() {
-  // 1. RGB Feed
+// ── Refresh Dual Hologram Video Textures (RGB + Depth, 120ms Chained Polling) ──
+let vrTexturePending = false;
+function scheduleTextureRefresh() {
+  if (vrTexturePending) return;
+  vrTexturePending = true;
+
   const yCanvas = document.getElementById('yolo-canvas');
+  const dCanvas = document.getElementById('depth-canvas');
+  let completed = 0;
+  const onFinish = () => {
+    completed++;
+    if (completed >= 2) {
+      vrTexturePending = false;
+      setTimeout(scheduleTextureRefresh, 120);
+    }
+  };
+
+  // 1. RGB Feed
   if (yCanvas) {
     const ctx = yCanvas.getContext('2d');
     const img = new Image();
@@ -2540,12 +3265,15 @@ function refreshTextures() {
         const m = scr.getObject3D('mesh').material;
         if (m && m.map) m.map.needsUpdate = true;
       }
+      onFinish();
     };
+    img.onerror = onFinish;
     img.src = '/video_frame.jpg?t=' + Date.now();
+  } else {
+    onFinish();
   }
 
   // 2. Depth Feed
-  const dCanvas = document.getElementById('depth-canvas');
   if (dCanvas) {
     const dctx = dCanvas.getContext('2d');
     const dimg = new Image();
@@ -2557,11 +3285,15 @@ function refreshTextures() {
         const dm = dscr.getObject3D('mesh').material;
         if (dm && dm.map) dm.map.needsUpdate = true;
       }
+      onFinish();
     };
+    dimg.onerror = onFinish;
     dimg.src = '/depth_frame.jpg?t=' + Date.now();
+  } else {
+    onFinish();
   }
 }
-setInterval(refreshTextures, 200);
+scheduleTextureRefresh();
 
 // VR Button handler
 document.addEventListener('DOMContentLoaded', () => {
@@ -2604,9 +3336,12 @@ connectWS();
 </body>
 </html>"""
 
-@app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
+    return DASHBOARD_HTML
+
+@app.get("/", response_class=HTMLResponse)
+def root_dashboard():
     return DASHBOARD_HTML
 
 @app.get("/vr", response_class=HTMLResponse)
