@@ -14,3 +14,6 @@ mission_log.md
 .agent/
 .env
 scratch/
+
+# Model Weights
+*.pt
