@@ -315,15 +315,41 @@ with gr.Blocks() as demo:
                     (function pollTab3Feeds() {
                         const rgbImg = document.getElementById('tab3_rgb_feed');
                         const depthImg = document.getElementById('tab3_depth_feed');
+                        let backoffUntil = 0;
+                        function triggerBackoff(ms = 3000) { backoffUntil = Math.max(backoffUntil, Date.now() + ms); }
+                        function isBackingOff() { return Date.now() < backoffUntil; }
+
                         function update() {
-                            if (!document.hidden) {
-                                const t = Date.now();
-                                if (rgbImg) rgbImg.src = '/video_frame.jpg?t=' + t;
-                                if (depthImg) depthImg.src = '/depth_frame.jpg?t=' + t;
+                            if (document.hidden) {
+                                setTimeout(update, 1000);
+                                return;
                             }
-                            setTimeout(update, 120);
+                            if (isBackingOff()) {
+                                setTimeout(update, Math.max(250, backoffUntil - Date.now()));
+                                return;
+                            }
+                            const t = Date.now();
+                            let remaining = 2;
+                            const finish = () => {
+                                remaining--;
+                                if (remaining <= 0) setTimeout(update, 250); // 250ms cadence
+                            };
+
+                            if (rgbImg) {
+                                const nextRgb = new Image();
+                                nextRgb.onload = () => { rgbImg.src = nextRgb.src; finish(); };
+                                nextRgb.onerror = () => { triggerBackoff(3000); finish(); };
+                                nextRgb.src = '/video_frame.jpg?t=' + t;
+                            } else { finish(); }
+
+                            if (depthImg) {
+                                const nextDepth = new Image();
+                                nextDepth.onload = () => { depthImg.src = nextDepth.src; finish(); };
+                                nextDepth.onerror = () => { triggerBackoff(3000); finish(); };
+                                nextDepth.src = '/depth_frame.jpg?t=' + t;
+                            } else { finish(); }
                         }
-                        setTimeout(update, 250);
+                        setTimeout(update, 400);
                     })();
                     </script>
                     """

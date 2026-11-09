@@ -531,10 +531,22 @@ def depth_feed_stream():
 
 # ── Purpose D: Flight Logs ──
 @app.get("/mission_logs")
-def get_mission_logs():
+def get_mission_logs(request: Request, format: Optional[str] = None):
     with state.lock:
-        logs = list(state.mission_logs)
-    return {"logs": logs, "total": len(logs)}
+        logs_list = list(state.mission_logs)
+    logs_str = "\n".join(logs_list) if logs_list else "Standby. Simulation active."
+
+    # Return clean plain text if requested via format parameter or text/plain Accept header
+    accept = request.headers.get("accept", "")
+    if format in ("text", "plain") or ("text/plain" in accept and "application/json" not in accept):
+        return Response(content=logs_str, media_type="text/plain; charset=utf-8")
+
+    return {
+        "status": "ok",
+        "logs": logs_str,
+        "logs_list": logs_list,
+        "total": len(logs_list),
+    }
 
 
 @app.get("/download_mission_log")

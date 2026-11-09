@@ -220,3 +220,4 @@ class PerceptionEngine:
             self._yolo_available = True
         except Exception:
             pass
+

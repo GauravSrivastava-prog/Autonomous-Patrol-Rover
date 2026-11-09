@@ -688,3 +688,4 @@ class ArenaPhysicsSimulator:
         self._is_running = False
         if self._thread:
             self._thread.join(timeout=1.0)
+

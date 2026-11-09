@@ -315,3 +315,4 @@ class MissionLogger:
                 f.write(f"| `{t_str}` | **{category}** | {action} |\n")
         except Exception:
             pass
+

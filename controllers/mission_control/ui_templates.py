@@ -301,8 +301,21 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 let currentMode = 'AI_PATROL';
 let autoGoalVlm = false;
 
+// ── Rate-Limit & Backoff Management (Prevents HF 429 Cascades) ──
+let backoffUntil = 0;
+function triggerBackoff(durationMs = 3000) {
+  backoffUntil = Math.max(backoffUntil, Date.now() + durationMs);
+  console.warn(`[RateLimit 429] Backing off requests for ${durationMs}ms`);
+}
+function isBackingOff() {
+  return Date.now() < backoffUntil;
+}
+
 // ── Robust AbortController API Fetch Wrapper ──
 async function apiPost(url, body = null, timeout = 2500) {
+  if (isBackingOff()) {
+    return { status: 'backoff', message: 'Rate limit backoff active' };
+  }
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), timeout);
   try {
@@ -313,9 +326,17 @@ async function apiPost(url, body = null, timeout = 2500) {
     }
     const res = await fetch(url, opts);
     clearTimeout(tid);
-    return await res.json().catch(() => ({}));
+    if (res.status === 429) {
+      triggerBackoff(3000);
+      return { status: 'rate_limited', code: 429 };
+    }
+    if (!res.ok) {
+      return { status: 'error', code: res.status };
+    }
+    return await res.json().catch(() => ({ status: 'ok' }));
   } catch (err) {
     clearTimeout(tid);
+    triggerBackoff(3000);
     console.warn('API call failed or timed out:', url, err);
     return {};
   }
@@ -367,27 +388,40 @@ async function triggerVlm() {
   await apiPost('/trigger_vlm_goal');
 }
 
-// ── Non-Blocking Snapshot Polling (Zero MJPEG Socket Exhaustion) ──
+// ── Non-Blocking Snapshot Polling (250ms Polite Cadence with Backoff) ──
 const videoImg = document.getElementById('videoFeed');
 const depthImg = document.getElementById('depthFeed');
 
 function pollVisionFeeds() {
   if (document.hidden) {
-    setTimeout(pollVisionFeeds, 200);
+    setTimeout(pollVisionFeeds, 1000);
     return;
   }
+  if (isBackingOff()) {
+    setTimeout(pollVisionFeeds, Math.max(250, backoffUntil - Date.now()));
+    return;
+  }
+
   const now = Date.now();
+  let remaining = 2;
+  const finish = () => {
+    remaining--;
+    if (remaining <= 0) {
+      setTimeout(pollVisionFeeds, 250); // 250ms stable cadence
+    }
+  };
+
   const nextRgb = new Image();
-  nextRgb.onload = () => { if (videoImg) videoImg.src = nextRgb.src; };
+  nextRgb.onload = () => { if (videoImg) videoImg.src = nextRgb.src; finish(); };
+  nextRgb.onerror = () => { triggerBackoff(3000); finish(); };
   nextRgb.src = '/video_frame.jpg?t=' + now;
 
   const nextDepth = new Image();
-  nextDepth.onload = () => { if (depthImg) depthImg.src = nextDepth.src; };
+  nextDepth.onload = () => { if (depthImg) depthImg.src = nextDepth.src; finish(); };
+  nextDepth.onerror = () => { triggerBackoff(3000); finish(); };
   nextDepth.src = '/depth_frame.jpg?t=' + now;
-
-  setTimeout(pollVisionFeeds, 90);
 }
-setTimeout(pollVisionFeeds, 150);
+setTimeout(pollVisionFeeds, 300);
 
 // ── Keyboard Teleop ──
 const keyMap = { w: 'FORWARD', a: 'LEFT', s: 'BACKWARD', d: 'RIGHT' };
@@ -489,37 +523,59 @@ function drawRadar(rx, ry, ryaw, trail) {
   ctx.restore();
 }
 
-// ── Telemetry Poller & WebSocket Bridge ──
+// ── Telemetry Poller (1000ms Stable Cadence with Backoff) ──
 async function pollTelemetry() {
+  if (document.hidden) {
+    setTimeout(pollTelemetry, 1000);
+    return;
+  }
+  if (isBackingOff()) {
+    setTimeout(pollTelemetry, Math.max(1000, backoffUntil - Date.now()));
+    return;
+  }
   try {
-    const res = await fetch('/telemetry');
-    if (!res.ok) return;
-    const data = await res.json();
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 2500);
+    const res = await fetch('/telemetry', { signal: ctrl.signal });
+    clearTimeout(tid);
 
-    document.getElementById('valPos').textContent = `${data.pos[0].toFixed(2)}, ${data.pos[1].toFixed(2)}`;
-    document.getElementById('valYaw').textContent = `${data.yaw_deg.toFixed(1)}°`;
-    document.getElementById('valSpeed').textContent = `${data.left_speed.toFixed(2)} / ${data.right_speed.toFixed(2)}`;
-    document.getElementById('valTarget').textContent = data.locked_target || 'NONE';
-    document.getElementById('valProx').textContent = `L:${data.ps_left.toFixed(0)} R:${data.ps_right.toFixed(0)}`;
-    document.getElementById('valDepth').textContent = `${data.depth_score.toFixed(2)}`;
-
-    const sceneBadge = document.getElementById('sceneBadge');
-    if (sceneBadge && data.semantic_scene) {
-      sceneBadge.textContent = `Scene: ${data.semantic_scene} (${(data.semantic_score * 100).toFixed(0)}%)`;
+    if (res.status === 429) {
+      triggerBackoff(3000);
+      setTimeout(pollTelemetry, 3000);
+      return;
     }
+    if (!res.ok) {
+      setTimeout(pollTelemetry, 1000);
+      return;
+    }
+    const data = await res.json();
+    if (data && data.pos) {
+      document.getElementById('valPos').textContent = `${data.pos[0].toFixed(2)}, ${data.pos[1].toFixed(2)}`;
+      document.getElementById('valYaw').textContent = `${data.yaw_deg.toFixed(1)}°`;
+      document.getElementById('valSpeed').textContent = `${data.left_speed.toFixed(2)} / ${data.right_speed.toFixed(2)}`;
+      document.getElementById('valTarget').textContent = data.locked_target || 'NONE';
+      document.getElementById('valProx').textContent = `L:${data.ps_left.toFixed(0)} R:${data.ps_right.toFixed(0)}`;
+      document.getElementById('valDepth').textContent = `${data.depth_score.toFixed(2)}`;
 
-    drawRadar(data.pos[0], data.pos[1], data.orientation, data.trail);
+      const sceneBadge = document.getElementById('sceneBadge');
+      if (sceneBadge && data.semantic_scene) {
+        sceneBadge.textContent = `Scene: ${data.semantic_scene} (${(data.semantic_score * 100).toFixed(0)}%)`;
+      }
 
-    // Update Logs
-    const logBox = document.getElementById('logBox');
-    if (data.latest_mission_log && logBox) {
-      logBox.innerHTML = `<div class="log-item"><span class="cat">[LIVE]</span> ${data.latest_mission_log}</div>`;
+      drawRadar(data.pos[0], data.pos[1], data.orientation, data.trail);
+
+      // Update Logs
+      const logBox = document.getElementById('logBox');
+      if (data.latest_mission_log && logBox) {
+        logBox.innerHTML = `<div class="log-item"><span class="cat">[LIVE]</span> ${data.latest_mission_log}</div>`;
+      }
     }
   } catch (e) {
-    // Silent polling catch
+    triggerBackoff(3000);
   }
+  setTimeout(pollTelemetry, 1000);
 }
-setInterval(pollTelemetry, 150);
+setTimeout(pollTelemetry, 500);
 </script>
 </body>
 </html>
@@ -683,28 +739,60 @@ async function sendReset() {
   await fetch('/teleport_reset', { method: 'POST' }).catch(() => {});
 }
 
-// Telemetry loop for VR Twin
-async function updateVrTelemetry() {
-  try {
-    const res = await fetch('/telemetry');
-    if (!res.ok) return;
-    const data = await res.json();
-    document.getElementById('h-mode').textContent = data.mode;
-    document.getElementById('h-pos').textContent = `${data.pos[0].toFixed(2)}, ${data.pos[1].toFixed(2)}`;
-    document.getElementById('h-yaw').textContent = `${data.yaw_deg.toFixed(1)}`;
-    document.getElementById('h-target').textContent = data.locked_target;
-    document.getElementById('h-depth').textContent = data.depth_hazard ? 'HAZARD' : 'CLEAR';
-
-    const rover = document.getElementById('rover-body');
-    if (rover) {
-      // In Webots coords x=right, y=forward, z=up; in A-Frame x=right, y=up, z=-forward
-      rover.setAttribute('position', `${data.pos[0].toFixed(3)} 0.15 ${(-data.pos[1]).toFixed(3)}`);
-      rover.setAttribute('rotation', `0 ${(data.yaw_deg - 90).toFixed(1)} 0`);
-    }
-  } catch (e) {}
+// Telemetry loop for VR Twin (1000ms Stable Cadence with Backoff)
+let vrBackoffUntil = 0;
+function vrTriggerBackoff(ms = 3000) {
+  vrBackoffUntil = Math.max(vrBackoffUntil, Date.now() + ms);
 }
-setInterval(updateVrTelemetry, 150);
+
+async function updateVrTelemetry() {
+  if (document.hidden) {
+    setTimeout(updateVrTelemetry, 1000);
+    return;
+  }
+  if (Date.now() < vrBackoffUntil) {
+    setTimeout(updateVrTelemetry, Math.max(1000, vrBackoffUntil - Date.now()));
+    return;
+  }
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 2500);
+    const res = await fetch('/telemetry', { signal: ctrl.signal });
+    clearTimeout(tid);
+
+    if (res.status === 429) {
+      vrTriggerBackoff(3000);
+      setTimeout(updateVrTelemetry, 3000);
+      return;
+    }
+    if (!res.ok) {
+      setTimeout(updateVrTelemetry, 1000);
+      return;
+    }
+
+    const data = await res.json();
+    if (data && data.pos) {
+      document.getElementById('h-mode').textContent = data.mode;
+      document.getElementById('h-pos').textContent = `${data.pos[0].toFixed(2)}, ${data.pos[1].toFixed(2)}`;
+      document.getElementById('h-yaw').textContent = `${data.yaw_deg.toFixed(1)}`;
+      document.getElementById('h-target').textContent = data.locked_target;
+      document.getElementById('h-depth').textContent = data.depth_hazard ? 'HAZARD' : 'CLEAR';
+
+      const rover = document.getElementById('rover-body');
+      if (rover) {
+        // In Webots coords x=right, y=forward, z=up; in A-Frame x=right, y=up, z=-forward
+        rover.setAttribute('position', `${data.pos[0].toFixed(3)} 0.15 ${(-data.pos[1]).toFixed(3)}`);
+        rover.setAttribute('rotation', `0 ${(data.yaw_deg - 90).toFixed(1)} 0`);
+      }
+    }
+  } catch (e) {
+    vrTriggerBackoff(3000);
+  }
+  setTimeout(updateVrTelemetry, 1000);
+}
+setTimeout(updateVrTelemetry, 500);
 </script>
 </body>
 </html>
 """
+
