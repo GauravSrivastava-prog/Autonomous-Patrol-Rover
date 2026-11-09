@@ -15,3 +15,4 @@ class PatrolRover < Formula
     assert_match "Autonomous Patrol Rover", shell_output("#{bin}/patrol-rover --help")
   end
 end
+

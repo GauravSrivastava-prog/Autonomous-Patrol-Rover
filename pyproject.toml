@@ -26,3 +26,4 @@ patrol-rover = "app:main"
 
 [tool.setuptools]
 py-modules = ["app", "core_engine"]
+
