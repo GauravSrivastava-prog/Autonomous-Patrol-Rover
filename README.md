@@ -1,43 +1,30 @@
----
-title: Autonomous Patrol Rover
-emoji: 🤖
-colorFrom: blue
-colorTo: indigo
-sdk: gradio
-sdk_version: 6.31.0
-python_version: '3.12'
-app_file: app.py
-pinned: false
-license: mit
----
-
 # 🤖 AI Vision Patrol Rover — 3D Cyberpunk GTA Mission Control & Multimodal AI Platform
 
-> An autonomous 3D robot featuring a widescreen 3rd-person chase camera ("TPP"), 1st-person bumper POV ("FPP"), monocular depth map, zero-latency multimodal semantic similarity telemetry, dynamic waypoint patrolling, open-vocabulary target intercept, and GTA circular minimap HUD.
+> An autonomous 3D robot featuring a widescreen 3rd-person chase camera ("TPP"), 1st-person bumper POV ("FPP"), monocular depth map, hardware-accelerated multimodal semantic similarity telemetry (Apple MPS / CUDA), dynamic waypoint patrolling, open-vocabulary target intercept, and GTA circular minimap HUD.
 
 ---
 
-## ⚡ Quickstart: 1-Command Installation & Launch
+## ⚡ Quickstart: 1-Command Evaluator Launch
 
-### Option 1: macOS Homebrew
+### Option 1: uvx (Zero Install / Recommended)
 ```bash
-brew install GauravSrivastava-prog/tap/patrol-rover
-patrol-rover --open
+uvx --from git+https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git patrol-rover
 ```
 
-### Option 2: pipx / uvx (Zero Install)
+### Option 2: pipx / pip
 ```bash
-uvx --from git+https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git patrol-rover --open
-# OR with pipx
-pipx run --spec git+https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git patrol-rover --open
+pipx run --spec git+https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git patrol-rover
+# OR via local clone:
+pip install -e .
+patrol-rover
 ```
 
-### Option 3: Docker Run
+### Option 3: Direct Python
 ```bash
-docker run -p 7860:7860 gauravprog/autonomous-patrol-rover
+python3 app.py
 ```
 
-Open `http://localhost:7860` in any web browser to enter the fullscreen GTA Mission Control deck.
+Automatically opens `http://127.0.0.1:7860` in your default web browser to enter the fullscreen GTA Mission Control deck.
 
 ---
 

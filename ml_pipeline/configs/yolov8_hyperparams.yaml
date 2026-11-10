@@ -50,3 +50,4 @@ mixup: 0.15                     # 2-image MixUp alpha blending probability
 copy_paste: 0.10                # Segment copy-paste probability
 erasing: 0.20                   # Random cutout/erasing simulating partial occlusions
 close_mosaic: 10                # Disable mosaic in final 10 epochs for fine localization
+
