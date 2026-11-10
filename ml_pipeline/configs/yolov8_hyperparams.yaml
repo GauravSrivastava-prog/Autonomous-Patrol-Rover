@@ -1,0 +1,52 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# YOLOv8 Enterprise Fine-Tuning Hyperparameters Configuration
+# Rover Vision: Indoor Objects & Obstacle Detection (Apple Metal / CUDA)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Architecture & Checkpointing
+model: yolov8n.pt               # Ultralytics lightweight base model
+task: detect                    # 2D Object Detection
+pretrained: true                # Start from COCO pre-trained weights
+
+# Optimization Regime
+optimizer: AdamW                # Adaptive Moment Estimation with Weight Decay
+lr0: 0.001                      # Initial learning rate (AdamW default scale)
+lrf: 0.01                       # Final learning rate ratio (lr0 * lrf = 1e-5)
+momentum: 0.937                 # AdamW beta1 / SGD momentum
+weight_decay: 0.0005            # L2 regularization factor
+warmup_epochs: 3.0              # Linear warmup duration
+warmup_momentum: 0.8            # Initial momentum during warmup
+warmup_bias_lr: 0.1             # Initial bias learning rate during warmup
+cos_lr: true                    # Cosine annealing learning rate scheduler
+
+# Loss Balancing (Focal & Bounding Box)
+box: 7.5                        # GIoU / CIoU bounding box loss weight
+cls: 0.5                        # Classification BCE loss weight
+dfl: 1.5                        # Distribution Focal Loss weight
+
+# Training Execution Parameters
+epochs: 50                      # Maximum training epochs
+batch: 16                       # Mini-batch size (auto-adjusted if OOM occurs)
+imgsz: 640                      # Input image spatial resolution (640x640)
+patience: 12                    # Early stopping patience if mAP plateaus
+save: true                      # Persist best and last model weights
+save_period: -1                 # Checkpoint frequency (-1 = only best and last)
+seed: 42                        # Deterministic random seed for reproducibility
+deterministic: true             # Enforce deterministic cuDNN / MPS algorithms
+
+# Augmentation Regimes for Dynamic Rover Perception (Motion blur, lighting, perspective)
+hsv_h: 0.015                    # Image HSV-Hue augmentation (fraction)
+hsv_s: 0.7                      # Image HSV-Saturation augmentation (fraction)
+hsv_v: 0.4                      # Image HSV-Value (exposure/brightness) augmentation
+degrees: 10.0                   # Image rotation (+/- deg) simulating rover roll
+translate: 0.1                  # Image translation (+/- fraction) simulating bump displacement
+scale: 0.5                      # Image scale gain (+/- gain) for multi-scale perception
+shear: 2.0                      # Image shear (+/- deg)
+perspective: 0.0005             # Perspective distortion simulating camera pitch
+flipud: 0.0                     # Vertical flip probability (robots don't drive upside-down)
+fliplr: 0.5                     # Horizontal flip probability (left/right symmetry)
+mosaic: 1.0                     # 4-image Mosaic augmentation probability
+mixup: 0.15                     # 2-image MixUp alpha blending probability
+copy_paste: 0.10                # Segment copy-paste probability
+erasing: 0.20                   # Random cutout/erasing simulating partial occlusions
+close_mosaic: 10                # Disable mosaic in final 10 epochs for fine localization

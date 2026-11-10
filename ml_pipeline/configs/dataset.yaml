@@ -1,0 +1,17 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Rover Perception Dataset Specification (YOLO Format)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+path: ../datasets/rover_indoor_objects    # Dataset root directory (relative to this config)
+train: images/train                       # Training images folder
+val: images/val                           # Validation images folder
+test: images/test                         # Test images folder (optional evaluation)
+
+# Class Mapping for Target Objects & Obstacles
+names:
+  0: blue_chair
+  1: green_plant
+  2: red_cone
+  3: wooden_crate
+  4: hazard_box
+  5: obstacle
