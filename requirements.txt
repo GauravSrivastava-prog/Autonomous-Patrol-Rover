@@ -6,3 +6,5 @@ pillow>=10.2.0
 torch>=2.0.0
 ultralytics>=8.2.0
 transformers>=4.40.0
+onnxruntime>=1.17.0
+

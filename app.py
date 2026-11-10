@@ -343,10 +343,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <span id="hwBadge" class="badge-pill">🍎 APPLE MPS ACCELERATED</span>
             <span id="fpsCounter" style="font-size:10px; font-family:monospace; color:var(--text-muted);">30.0 FPS</span>
           </div>
-          <div style="font-size:10px; font-weight:700; color:var(--accent); margin-bottom:4px; display:flex; justify-content:space-between;">
+          <div style="font-size:10px; font-weight:700; color:var(--accent); margin-bottom:2px; display:flex; justify-content:space-between;">
             <span>MULTIMODAL VLM MATCH</span>
             <span id="vlmActiveTarget" style="color:#fff;">--</span>
           </div>
+          <div id="yoloCount" style="font-size:9px; font-family:monospace; color:#38bdf8; margin-bottom:5px;">🎯 YOLO DETECTIONS: 0</div>
           <div id="vlmScoresList">
             <!-- Dynamic similarity bars -->
           </div>
@@ -559,6 +560,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           if (hwEl && d.neural_badge) hwEl.textContent = d.neural_badge;
           const fpsEl = document.getElementById('fpsCounter');
           if (fpsEl && d.fps) fpsEl.textContent = `${d.fps.toFixed(1)} FPS`;
+          const yoloCountEl = document.getElementById('yoloCount');
+          if (yoloCountEl && d.yolo_detections !== undefined) {
+            yoloCountEl.textContent = `🎯 YOLO DETECTIONS: ${d.yolo_detections.length} IN VIEW`;
+          }
 
           // Mode Button Sync
           if (d.mode) {

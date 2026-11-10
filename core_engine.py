@@ -157,67 +157,191 @@ class RobotState:
 # ──────────────────────────────────────────────────────────────────────────────
 # 5. Multimodal AI Resolver (YOLOv8 + OpenAI CLIP + Pre-Computed Semantic Cache)
 # ──────────────────────────────────────────────────────────────────────────────
+BASE_DIR = Path(__file__).resolve().parent
+MODELS_DIR = BASE_DIR / "models"
+ML_MODELS_DIR = BASE_DIR / "ml_pipeline" / "models"
+
+def _is_valid_file(path: Path, min_bytes: int = 512) -> bool:
+    """Verifies file existence, readability, and non-empty status."""
+    try:
+        return path.is_file() and path.stat().st_size >= min_bytes
+    except Exception:
+        return False
+
 class MultimodalPerceptionEngine:
     """
-    Hardware-accelerated neural perception loader.
-    Checks models/ for fine-tuned weights, then falls back to base models or semantic cache.
+    Hardware-accelerated neural perception loader with Cloud-to-Edge tensor remapping:
+    - Deserializes CUDA checkpoints to Apple MPS / CPU using safe map_location.
+    - Seamlessly falls back to ONNX (rover_yolo_tuned.onnx) or baseline yolov8n.pt.
+    - Handles cross-platform pickle deserialization for clip_semantic_cache.pkl.
+    - Runs sub-millisecond CLIP open-vocabulary cosine similarity queries.
     """
     def __init__(self, device: str = NEURAL_DEVICE):
         self.device = device
         self.yolo_model = None
+        self.yolo_source = "STANDBY"
         self.clip_model = None
         self.clip_processor = None
         self.semantic_cache = None
+        self.cache_source = "STANDBY"
         self.is_loaded = False
         self._init_models()
 
     def _init_models(self):
-        """Asynchronously attempts to load YOLOv8 and CLIP with local weights."""
+        """Asynchronously attempts to load YOLOv8 and CLIP with safe cross-platform remapping."""
         def _loader():
-            # 1. Check for Pre-computed Semantic Cache from MLOps pipeline
-            cache_paths = [
-                Path("models/clip_semantic_cache.json"),
-                Path("ml_pipeline/models/clip_semantic_cache.json")
+            # ──────────────────────────────────────────────────────────────
+            # 1. Load CLIP Semantic Cache (.pkl or .json) with CUDA-safe remap
+            # ──────────────────────────────────────────────────────────────
+            cache_candidates = [
+                MODELS_DIR / "clip_semantic_cache.pkl",
+                MODELS_DIR / "clip_semantic_cache.json",
+                ML_MODELS_DIR / "clip_semantic_cache.pkl",
+                ML_MODELS_DIR / "clip_semantic_cache.json",
             ]
-            for cp in cache_paths:
-                if cp.exists():
-                    try:
+
+            for cp in cache_candidates:
+                if not _is_valid_file(cp, min_bytes=64):
+                    continue
+                try:
+                    raw_cache = None
+                    if cp.suffix.lower() == ".pkl":
+                        # CRUCIAL: torch.load with map_location='cpu' prevents crash if Colab pickled CUDA tensors!
+                        try:
+                            raw_cache = torch.load(cp, map_location="cpu", weights_only=False)
+                        except Exception:
+                            with open(cp, "rb") as f:
+                                raw_cache = pickle.load(f)
+                    elif cp.suffix.lower() == ".json":
                         with open(cp, "r", encoding="utf-8") as f:
-                            self.semantic_cache = json.load(f)
-                            print(f"✅ Loaded pre-computed CLIP Semantic Cache from {cp}")
+                            raw_cache = json.load(f)
+
+                    if raw_cache:
+                        # Extract and normalize embeddings dictionary
+                        data_dict = raw_cache.get("embeddings", raw_cache) if isinstance(raw_cache, dict) else raw_cache
+                        embeddings = {}
+                        if isinstance(data_dict, dict):
+                            for k, v in data_dict.items():
+                                if isinstance(v, (list, tuple)):
+                                    vec = np.array(v, dtype=np.float32)
+                                elif isinstance(v, torch.Tensor):
+                                    vec = v.detach().cpu().numpy().astype(np.float32).flatten()
+                                elif isinstance(v, np.ndarray):
+                                    vec = v.astype(np.float32).flatten()
+                                else:
+                                    continue
+                                norm = np.linalg.norm(vec)
+                                if norm > 1e-6:
+                                    vec = vec / norm
+                                embeddings[k.lower()] = vec
+
+                        if embeddings:
+                            self.semantic_cache = {"embeddings": embeddings}
+                            self.cache_source = f"{cp.name} ({len(embeddings)} classes)"
+                            print(f"✅ [CLIP Cache] Loaded {len(embeddings)} class embeddings from {cp}")
                             break
-                    except Exception as e:
-                        print(f"⚠️ Could not load semantic cache {cp}: {e}")
+                except Exception as cache_err:
+                    print(f"⚠️ [CLIP Cache] Failed to load {cp}: {cache_err}")
 
-            # 2. Check for Fine-Tuned YOLOv8 weights
-            yolo_weights = [
-                Path("models/rover_yolo_tuned.pt"),
-                Path("ml_pipeline/runs/train/rover_yolo_run/weights/best.pt"),
-                Path("yolov8n.pt")
+            # ──────────────────────────────────────────────────────────────
+            # 2. Load YOLOv8 Detector (PyTorch map_location MPS/CPU -> ONNX -> Base)
+            # ──────────────────────────────────────────────────────────────
+            pt_candidates = [
+                MODELS_DIR / "rover_yolo_tuned.pt",
+                BASE_DIR / "ml_pipeline" / "runs" / "train" / "rover_yolo_run" / "weights" / "best.pt",
             ]
-            chosen_yolo = None
-            for yp in yolo_weights:
-                if yp.exists():
-                    chosen_yolo = str(yp)
-                    break
+            onnx_candidates = [
+                MODELS_DIR / "rover_yolo_tuned.onnx",
+                BASE_DIR / "ml_pipeline" / "runs" / "train" / "rover_yolo_run" / "weights" / "best.onnx",
+            ]
 
-            if chosen_yolo:
+            # Priority A: Tuned PyTorch Weights (.pt) with explicit CUDA->MPS/CPU deserialization
+            for pt_path in pt_candidates:
+                if not _is_valid_file(pt_path, min_bytes=1024 * 100):
+                    continue
+                try:
+                    size_mb = pt_path.stat().st_size / (1024 * 1024)
+                    print(f"📦 Found tuned YOLO checkpoint: {pt_path} ({size_mb:.2f} MB)")
+                    from ultralytics import YOLO
+
+                    # Safe pre-check: verify deserialization without CUDA hardware crash
+                    try:
+                        _ = torch.load(pt_path, map_location="cpu", weights_only=False)
+                    except Exception as torch_load_err:
+                        print(f"⚠️ Pre-flight torch.load warning: {torch_load_err}")
+
+                    yolo = YOLO(str(pt_path))
+                    # Map to Apple Silicon Metal (MPS) or CPU
+                    model_dev = "cpu"
+                    if self.device == "mps" and torch.backends.mps.is_available():
+                        try:
+                            yolo.to("mps")
+                            model_dev = "mps"
+                        except Exception as mps_err:
+                            print(f"⚠️ MPS pinning deferred ({mps_err}); executing on CPU")
+                            yolo.to("cpu")
+                    elif self.device == "cuda" and torch.cuda.is_available():
+                        yolo.to("cuda")
+                        model_dev = "cuda"
+                    else:
+                        yolo.to("cpu")
+
+                    self.yolo_model = yolo
+                    self.yolo_source = f"TUNED_PT ({size_mb:.1f}MB, {model_dev.upper()})"
+                    print(f"✅ Loaded YOLOv8 Tuned Model: {pt_path} on {model_dev.upper()}")
+                    break
+                except Exception as pt_err:
+                    print(f"⚠️ PyTorch .pt load failed ({pt_path}): {pt_err}. Testing ONNX fallback...")
+
+            # Priority B: ONNX Runtime Fallback if .pt failed or absent
+            if self.yolo_model is None:
+                for onnx_path in onnx_candidates:
+                    if not _is_valid_file(onnx_path, min_bytes=1024 * 100):
+                        continue
+                    try:
+                        size_mb = onnx_path.stat().st_size / (1024 * 1024)
+                        print(f"🔄 Engaging ONNX Runtime fallback: {onnx_path} ({size_mb:.2f} MB)")
+                        from ultralytics import YOLO
+                        yolo_onnx = YOLO(str(onnx_path), task="detect")
+                        self.yolo_model = yolo_onnx
+                        self.yolo_source = f"TUNED_ONNX ({size_mb:.1f}MB)"
+                        print(f"✅ Loaded YOLOv8 ONNX Runtime Model: {onnx_path}")
+                        break
+                    except Exception as onnx_err:
+                        print(f"⚠️ ONNX Runtime load failed ({onnx_path}): {onnx_err}")
+
+            # Priority C: Baseline yolov8n.pt Fallback
+            if self.yolo_model is None:
                 try:
                     from ultralytics import YOLO
-                    self.yolo_model = YOLO(chosen_yolo)
-                    print(f"✅ Loaded YOLOv8 detector: {chosen_yolo} on {self.device.upper()}")
-                except Exception as e:
-                    print(f"ℹ️ YOLOv8 optional module: {e}")
+                    yolo_base = YOLO("yolov8n.pt")
+                    if self.device == "mps" and torch.backends.mps.is_available():
+                        try:
+                            yolo_base.to("mps")
+                        except Exception:
+                            yolo_base.to("cpu")
+                    elif self.device == "cuda" and torch.cuda.is_available():
+                        yolo_base.to("cuda")
+                    else:
+                        yolo_base.to("cpu")
+                    self.yolo_model = yolo_base
+                    self.yolo_source = f"BASE_YOLOV8N ({self.device.upper()})"
+                    print(f"ℹ️ Loaded baseline yolov8n.pt on {self.device.upper()}")
+                except Exception as base_err:
+                    print(f"ℹ️ Baseline YOLO deferred: {base_err}")
+                    self.yolo_source = "GEOMETRIC_FALLBACK"
 
-            # 3. Check for CLIP model
+            # ──────────────────────────────────────────────────────────────
+            # 3. Load OpenAI CLIP Transformer Model (Asynchronous background)
+            # ──────────────────────────────────────────────────────────────
             try:
                 from transformers import CLIPModel, CLIPProcessor
                 self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
                 self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
                 self.clip_model.eval()
-                print(f"✅ Loaded OpenAI CLIP on {self.device.upper()}")
+                print(f"✅ Loaded OpenAI CLIP transformer on {self.device.upper()}")
             except Exception as e:
-                print(f"ℹ️ CLIP transformer model deferred: {e}")
+                print(f"ℹ️ OpenAI CLIP transformer deferred: {e}")
 
             self.is_loaded = True
 
@@ -226,34 +350,60 @@ class MultimodalPerceptionEngine:
     def compute_similarity(self, prompt: str) -> Dict[str, float]:
         """
         Computes cosine similarity between target prompt and all arena objects.
-        Prioritizes CLIP semantic cache for sub-millisecond lookup.
+        Prioritizes CLIP semantic cache and live CLIP embeddings for sub-millisecond lookup.
         """
         if not prompt or not prompt.strip():
             return {k: 0.15 for k in ARENA_OBJECTS.keys()}
 
         clean_p = prompt.lower().strip()
 
-        # Path A: Fast Pre-computed Semantic Cache Lookup (<0.1ms)
+        # Path 1: Live CLIP Text Embedding + Dot Product against Semantic Cache
+        if (self.clip_model is not None and self.clip_processor is not None
+                and self.semantic_cache and "embeddings" in self.semantic_cache):
+            try:
+                inputs = self.clip_processor(text=[clean_p], return_tensors="pt", padding=True).to(self.device)
+                with torch.no_grad():
+                    text_features = self.clip_model.get_text_features(**inputs)
+                    text_features = text_features / text_features.norm(p=2, dim=-1, keepdim=True)
+                    prompt_vec = text_features.detach().cpu().numpy().squeeze(0)
+
+                scores = {}
+                cache_embs = self.semantic_cache["embeddings"]
+                for key, obj in ARENA_OBJECTS.items():
+                    best_dot = -1.0
+                    for cls_name, cls_vec in cache_embs.items():
+                        dot = float(np.dot(prompt_vec, cls_vec))
+                        if (cls_name in obj.name.lower()
+                                or any(a in cls_name for a in obj.aliases)
+                                or any(cls_name in a for a in obj.aliases)):
+                            best_dot = max(best_dot, dot)
+                        elif key.lower() in cls_name:
+                            best_dot = max(best_dot, dot)
+                    # Rescale [-1, 1] to [0.08, 0.96]
+                    sim = (best_dot + 1.0) / 2.0 if best_dot > -1.0 else 0.15
+                    scores[key] = max(0.08, min(0.96, sim))
+                return self._normalize_scores(scores)
+            except Exception as clip_err:
+                print(f"ℹ️ Live CLIP inference fallback: {clip_err}")
+
+        # Path 2: Fast Pre-computed Semantic Cache Keyword Lookup (<0.1ms)
         if self.semantic_cache and "embeddings" in self.semantic_cache:
             cache_embeddings = self.semantic_cache["embeddings"]
             scores = {}
             for key, obj in ARENA_OBJECTS.items():
-                target_token = obj.name.lower().replace(" ", "_")
-                # Direct match or partial match
                 best_sim = 0.15
-                for cached_class, emb in cache_embeddings.items():
+                for cached_class in cache_embeddings.keys():
                     if any(alias in clean_p for alias in obj.aliases):
                         best_sim = max(best_sim, 0.94)
                     elif any(kw in clean_p for kw in obj.keywords):
                         best_sim = max(best_sim, 0.78)
-                    elif cached_class in clean_p:
-                        best_sim = max(best_sim, 0.85)
+                    elif cached_class in clean_p or any(cached_class in a for a in obj.aliases):
+                        best_sim = max(best_sim, 0.88)
                 scores[key] = best_sim
             return self._normalize_scores(scores)
 
-        # Path B: Live Character N-Gram & Keyword Multi-Modal Scorer (<0.4ms CPU fallback)
+        # Path 3: Multi-Modal Alias & Keyword Scorer (<0.4ms CPU fallback)
         scores = {}
-        p_chars = set(clean_p.split())
         for key, obj in ARENA_OBJECTS.items():
             s = 0.10
             for alias in obj.aliases:
@@ -295,6 +445,7 @@ class RobotController:
         self.perception = MultimodalPerceptionEngine(NEURAL_DEVICE)
         self.running = False
         self.thread: Optional[threading.Thread] = None
+        self.perception_thread: Optional[threading.Thread] = None
 
         self.patrol_idx = 0
         self.standoff_dist = 0.55
@@ -314,11 +465,70 @@ class RobotController:
             self.running = True
             self.thread = threading.Thread(target=self._loop, daemon=True)
             self.thread.start()
+            self.perception_thread = threading.Thread(target=self._perception_loop, daemon=True)
+            self.perception_thread.start()
 
     def stop(self):
         self.running = False
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1.0)
+        if self.perception_thread and self.perception_thread.is_alive():
+            self.perception_thread.join(timeout=1.0)
+
+    def _perception_loop(self):
+        """Asynchronous perception worker: runs YOLOv8 at ~8 Hz without stalling 30 FPS graphics."""
+        while self.running:
+            time.sleep(0.12)
+            if not self.perception.is_loaded or self.perception.yolo_model is None:
+                continue
+
+            with self.state.lock:
+                frame_bytes = self.latest_rgb
+
+            if not frame_bytes:
+                continue
+
+            try:
+                nparr = np.frombuffer(frame_bytes, np.uint8)
+                img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if img_bgr is None:
+                    continue
+
+                h, w = img_bgr.shape[:2]
+                small_img = cv2.resize(img_bgr, (640, 360))
+
+                # Safe prediction execution
+                results = self.perception.yolo_model.predict(
+                    small_img,
+                    conf=0.25,
+                    verbose=False,
+                    device="mps" if self.perception.device == "mps" and torch.backends.mps.is_available() else "cpu"
+                )
+
+                detections = []
+                if results and len(results) > 0:
+                    boxes = results[0].boxes
+                    names = getattr(results[0], "names", {})
+                    if boxes is not None and len(boxes) > 0:
+                        for b in boxes:
+                            cls_id = int(b.cls[0].item())
+                            conf = float(b.conf[0].item())
+                            label = names.get(cls_id, f"object_{cls_id}")
+                            xyxy = b.xyxy[0].cpu().numpy()
+                            x1 = int(xyxy[0] * (w / 640.0))
+                            y1 = int(xyxy[1] * (h / 360.0))
+                            x2 = int(xyxy[2] * (w / 640.0))
+                            y2 = int(xyxy[3] * (h / 360.0))
+                            detections.append({
+                                "label": label,
+                                "conf": round(conf, 2),
+                                "box": [x1, y1, x2, y2]
+                            })
+
+                with self.state.lock:
+                    self.state.yolo_detections = detections
+            except Exception:
+                pass
 
     # ── Command Handlers ──
     def set_mode(self, mode: ControlMode):
@@ -831,6 +1041,8 @@ class RobotController:
     # ── Telemetry API Payload ──
     def get_telemetry(self) -> Dict[str, Any]:
         with self.state.lock:
+            # Enriched hardware & model status for HUD
+            enriched_badge = f"{self.state.neural_badge} | YOLO: {self.perception.yolo_source} | CLIP: {self.perception.cache_source}"
             return {
                 "x": round(self.state.x, 2),
                 "y": round(self.state.y, 2),
@@ -844,7 +1056,7 @@ class RobotController:
                 "vlm_scores": self.state.vlm_scores,
                 "yolo_detections": self.state.yolo_detections,
                 "neural_device": self.state.neural_device,
-                "neural_badge": self.state.neural_badge,
+                "neural_badge": enriched_badge,
                 "fps": self.state.fps,
                 "trail": self.state.trail[-120:],
             }
