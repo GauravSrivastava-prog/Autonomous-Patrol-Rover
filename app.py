@@ -335,7 +335,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <div class="pip-container">
           <span class="pip-tag">MONOCULAR DEPTH (MAGMA)</span>
           <img id="depthFeed" src="/depth_feed" alt="Monocular Depth Feed" />
-          <button id="btnViewToggle" class="view-toggle-btn" onclick="(window.toggleView||toggleView)()">🎥 POV: 3RD PERSON</button>
+          <button id="btnViewToggle" class="view-toggle-btn">🎥 POV: 3RD PERSON</button>
         </div>
 
         <div class="frosted telemetry-card">
@@ -357,15 +357,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <!-- Top Right: Mode Selection Dock & Natural Language Search -->
       <div class="top-right-box interactive">
         <div class="frosted mode-dock">
-          <button id="btnPatrol" class="pill-btn active" onclick="(window.setMode||setMode)('AI_PATROL')">🧠 AI Patrol</button>
-          <button id="btnChase" class="pill-btn" onclick="(window.setMode||setMode)('AI_CHASE')">🎯 AI Chase</button>
-          <button id="btnManual" class="pill-btn" onclick="(window.setMode||setMode)('MANUAL')">🕹️ Manual</button>
-          <button id="btnReset" class="pill-btn" onclick="(window.postApi||postApi)('/reset')">🔄 Reset (0,0)</button>
+          <button id="btnPatrol" class="pill-btn active">🧠 AI Patrol</button>
+          <button id="btnChase" class="pill-btn">🎯 AI Chase</button>
+          <button id="btnManual" class="pill-btn">🕹️ Manual</button>
+          <button id="btnReset" class="pill-btn">🔄 Reset (0,0)</button>
         </div>
 
         <div class="frosted search-box">
           <input id="promptInput" type="text" placeholder="Seek target (e.g. blue chair, wooden crate)..." />
-          <button id="btnSeek" onclick="(window.sendTarget||sendTarget)()">Seek</button>
+          <button id="btnSeek">Seek</button>
         </div>
       </div>
     </div>
