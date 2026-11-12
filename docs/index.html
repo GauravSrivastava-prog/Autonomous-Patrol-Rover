@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AUTONOMOUS PATROL ROVER // Bare-Metal Edge Perception Engine</title>
+
+  <!-- Typography & Styling CDNs -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- React 18 & Babel CDNs -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #05080c;
+      --term-green: #00ff9d;
+      --term-cyan: #00e5ff;
+      --term-amber: #ffd600;
+      --term-red: #ff1744;
+      --border-dark: #1e293b;
+      --font-mono: "JetBrains Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      background-color: var(--bg);
+      color: #e2e8f0;
+      font-family: var(--font-mono);
+      min-height: 100vh;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Subtle CRT Scanline Vignette */
+    body::before {
+      content: "";
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.22) 50%),
+                  linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.02));
+      background-size: 100% 3px, 6px 100%;
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+    .cursor-blink {
+      animation: blink 1s infinite steps(1);
+    }
+  </style>
+</head>
+<body class="bg-[#05080c] text-left">
+  <div id="root"></div>
+
+  <!-- React Application with LaserFlow Component -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 1. Dynamic WebGL LaserFlow Canvas Component
+    // Traces and encircles the perimeter of surfaceRef as it progressively grows
+    // ─────────────────────────────────────────────────────────────────────────────
+    function LaserFlow({ surfaceRef }) {
+      const canvasRef = useRef(null);
+
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        let animId;
+
+        const updateSize = () => {
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+        };
+        updateSize();
+        window.addEventListener('resize', updateSize);
+
+        let progress = 0.0;
+        let dropT = 0.0;
+
+        const render = () => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          if (surfaceRef && surfaceRef.current) {
+            const rect = surfaceRef.current.getBoundingClientRect();
+            const pad = 4;
+            const x = rect.left - pad;
+            const y = rect.top - pad;
+            const w = rect.width + pad * 2;
+            const h = rect.height + pad * 2;
+            const perimeter = 2 * (w + h);
+
+            progress = (progress + 0.0035) % 1.0;
+            if (dropT < 1.0) dropT = Math.min(1.0, dropT + 0.05);
+
+            // Perimeter mapping function
+            const getPos = (t) => {
+              const d = ((t % 1.0) + 1.0) % 1.0 * perimeter;
+              if (d < w) return { x: x + d, y: y };
+              if (d < w + h) return { x: x + w, y: y + (d - w) };
+              if (d < 2 * w + h) return { x: x + w - (d - (w + h)), y: y + h };
+              return { x: x, y: y + h - (d - (2 * w + h)) };
+            };
+
+            ctx.save();
+
+            // Initial Drop-In Laser Beam
+            if (dropT < 1.0) {
+              const startX = x + w * 0.5;
+              const curY = y * dropT;
+              ctx.strokeStyle = '#00e5ff';
+              ctx.lineWidth = 2.5;
+              ctx.shadowColor = '#00e5ff';
+              ctx.shadowBlur = 18;
+              ctx.beginPath();
+              ctx.moveTo(startX, 0);
+              ctx.lineTo(startX, curY);
+              ctx.stroke();
+            }
+
+            // Laser Flow Trail
+            const trailSteps = 45;
+            const trailLen = 0.28; // 28% of perimeter
+            for (let i = 0; i < trailSteps; i++) {
+              const t1 = progress - (i / trailSteps) * trailLen;
+              const t2 = progress - ((i + 1) / trailSteps) * trailLen;
+              const p1 = getPos(t1);
+              const p2 = getPos(t2);
+              const alpha = Math.pow(1 - i / trailSteps, 1.6);
+
+              ctx.beginPath();
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+              ctx.strokeStyle = `rgba(0, 229, 255, ${alpha * 0.95})`;
+              ctx.lineWidth = 2 + (1 - i / trailSteps) * 2.5;
+              ctx.shadowColor = '#00e5ff';
+              ctx.shadowBlur = (1 - i / trailSteps) * 20;
+              ctx.stroke();
+            }
+
+            // Laser Flow Glowing Head
+            const head = getPos(progress);
+            ctx.beginPath();
+            ctx.arc(head.x, head.y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = '#00e5ff';
+            ctx.shadowBlur = 24;
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(head.x, head.y, 9, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0, 229, 255, 0.45)';
+            ctx.shadowColor = '#00e5ff';
+            ctx.shadowBlur = 32;
+            ctx.fill();
+
+            ctx.restore();
+          }
+
+          animId = requestAnimationFrame(render);
+        };
+
+        render();
+
+        return () => {
+          cancelAnimationFrame(animId);
+          window.removeEventListener('resize', updateSize);
+        };
+      }, [surfaceRef]);
+
+      return (
+        <canvas
+          ref={canvasRef}
+          className="fixed inset-0 pointer-events-none z-20"
+        />
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 2. Typewriter Text Component
+    // ─────────────────────────────────────────────────────────────────────────────
+    function Typewriter({ text, speed = 14, onComplete = null }) {
+      const [displayed, setDisplayed] = useState("");
+
+      useEffect(() => {
+        let i = 0;
+        setDisplayed("");
+        const timer = setInterval(() => {
+          if (i < text.length) {
+            setDisplayed(text.slice(0, i + 1));
+            i++;
+          } else {
+            clearInterval(timer);
+            if (onComplete) onComplete();
+          }
+        }, speed);
+        return () => clearInterval(timer);
+      }, [text, speed]);
+
+      return <span>{displayed}</span>;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 3. Command Card with Instant Copy
+    // ─────────────────────────────────────────────────────────────────────────────
+    function CommandCard({ tag, command, note = "", feedback = "" }) {
+      const [copied, setCopied] = useState(false);
+
+      const handleCopy = () => {
+        navigator.clipboard.writeText(command);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1600);
+      };
+
+      return (
+        <div className="bg-[#020406] border border-[#1e293b] border-l-4 border-l-[#00ff9d] p-3 my-2.5 rounded-sm text-left">
+          <div className="flex justify-between items-center mb-1 text-[11px] text-slate-400 font-bold uppercase">
+            <span>{tag}</span>
+            <button
+              onClick={handleCopy}
+              className="bg-[#00ff9d]/10 hover:bg-[#00ff9d] text-[#00ff9d] hover:text-[#05080c] text-[10px] font-bold px-2.5 py-0.5 rounded transition"
+            >
+              {copied ? "COPIED! ✔" : "COPY"}
+            </button>
+          </div>
+          <pre className="text-white text-sm font-semibold overflow-x-auto whitespace-pre-wrap">
+            <span className="text-[#00ff9d]">{command}</span>
+            {note && <span className="text-slate-500 ml-2 font-normal"># {note}</span>}
+          </pre>
+          {feedback && <div className="text-[12px] text-[#00ff9d] mt-1 font-semibold">{feedback}</div>}
+        </div>
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 4. Main Interactive Terminal Manifesto Application
+    // Stages: 0: INIT -> 1: VIDEO -> 2: IMAGE -> 3: INSTALL -> 4: LAUNCH
+    // ─────────────────────────────────────────────────────────────────────────────
+    function App() {
+      const surfaceRef = useRef(null);
+      const [stage, setStage] = useState(0); // 0: Init, 1: Video, 2: Image, 3: Install, 4: Launch
+      const [userChoices, setUserChoices] = useState({});
+
+      // Global keyboard handler for [Y/N]
+      useEffect(() => {
+        const handleKeyDown = (e) => {
+          const key = e.key.toUpperCase();
+          if (key === 'Y' || key === 'N') {
+            advanceStage(key);
+          }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+      }, [stage]);
+
+      const advanceStage = (choice) => {
+        if (stage >= 4) return;
+        setUserChoices(prev => ({ ...prev, [stage]: choice }));
+        setStage(prev => prev + 1);
+
+        // Smooth scroll to keep newly revealed content in view
+        setTimeout(() => {
+          if (surfaceRef.current) {
+            surfaceRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+          }
+        }, 120);
+      };
+
+      return (
+        <div className="min-h-screen bg-[#05080c] text-slate-200 px-6 py-12 flex flex-col items-start justify-start relative text-left">
+          
+          {/* LaserFlow WebGL perimeter tracer targeting surfaceRef */}
+          <LaserFlow surfaceRef={surfaceRef} />
+
+          <div className="w-full max-w-4xl mr-auto ml-0 z-30">
+            
+            {/* Header: Clean Single Title (Left-Aligned, Monospace) */}
+            <header className="mb-7 text-left">
+              <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight uppercase mb-1.5 font-mono">
+                AUTONOMOUS PATROL ROVER
+              </h1>
+              <div className="text-sm font-bold text-[#00e5ff] tracking-wide uppercase font-mono">
+                Bare-Metal Edge Perception Engine
+              </div>
+            </header>
+
+            {/* Academic Manifesto Callout */}
+            <div className="bg-[#0a0f16]/90 border border-[#00ff9d]/30 shadow-[0_0_24px_rgba(0,255,157,0.06)] rounded-sm p-6 mb-8 text-left">
+              <p className="text-slate-100 text-[15px] leading-relaxed font-normal">
+                As a computer science student engineering a real-world autonomous system, relying on standard cloud deployments wasn't an option. True autonomous robotics demands 60 FPS deterministic physics and sub-millisecond IPC loops. To achieve this, we engineered a local-first architecture, hijacking the host machine's Apple Silicon MPS and NVIDIA CUDA cores to run dual neural networks (YOLOv8 + CLIP) at zero latency. This is a bare-metal edge perception engine built for rigorous academic evaluation.
+              </p>
+            </div>
+
+            {/* Main Terminal Container Box (Targeted by surfaceRef) */}
+            <div
+              ref={surfaceRef}
+              id="terminalBox"
+              className="w-full bg-[#05080c] border border-[#1e293b] rounded-sm p-6 shadow-2xl relative text-left transition-all duration-300"
+            >
+              
+              {/* Terminal Title Bar */}
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#1e293b] text-xs text-slate-400 font-mono">
+                <div className="flex items-center space-x-2">
+                  <span className="w-3 h-3 rounded-full bg-[#ff5f56] inline-block"></span>
+                  <span className="w-3 h-3 rounded-full bg-[#ffbd2e] inline-block"></span>
+                  <span className="w-3 h-3 rounded-full bg-[#27c93f] inline-block"></span>
+                  <span className="ml-2 font-bold text-slate-300">root@rover:~# mission-control-session</span>
+                </div>
+                <div className="text-[11px] text-[#00e5ff]">MPS // 60 FPS ZERO-IPC</div>
+              </div>
+
+              {/* ── STAGE 0: PROMPT 1 (LOAD LIVE SIMULATION FEED?) ── */}
+              <div className="mb-6">
+                <div className="flex items-center flex-wrap gap-2 text-sm text-slate-200">
+                  <span className="text-[#00ff9d] font-bold">root@rover:~#</span>
+                  <span>Load live simulation feed? [Y/N]:</span>
+                  {userChoices[0] ? (
+                    <span className="text-[#00ff9d] font-bold"> {userChoices[0]}</span>
+                  ) : (
+                    <>
+                      <span className="inline-block w-2.5 h-4 bg-[#00ff9d] cursor-blink align-middle ml-1"></span>
+                      <span className="inline-flex items-center gap-1.5 ml-2">
+                        <button
+                          onClick={() => advanceStage('Y')}
+                          className="bg-[#00ff9d]/15 hover:bg-[#00ff9d] text-[#00ff9d] hover:text-[#05080c] border border-[#00ff9d] text-xs font-bold px-2.5 py-0.5 rounded transition"
+                        >
+                          [ Y ] Proceed
+                        </button>
+                        <button
+                          onClick={() => advanceStage('N')}
+                          className="bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600 text-xs font-bold px-2 py-0.5 rounded transition"
+                        >
+                          [ N ] Skip
+                        </button>
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                {/* ── STAGE 1: VIDEO FEED REVEAL ── */}
+                {stage >= 1 && (
+                  <div className="mt-4 transition-all duration-300">
+                    <div className="text-xs text-[#00e5ff] font-bold mb-1.5 tracking-wider uppercase">
+                      01 // 60 FPS 3D POV CHASE STREAM (WEBOTS ARENA)
+                    </div>
+                    <div className="relative rounded overflow-hidden border border-[#00e5ff]/50 shadow-[0_0_24px_rgba(0,229,255,0.2)] bg-black">
+                      <video
+                        src="rover_demo.mp4"
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        className="w-full max-h-[460px] object-cover"
+                      />
+                      <div className="absolute top-3 left-3 bg-[#05080c]/85 border border-[#00e5ff]/40 px-2.5 py-1 text-[11px] text-[#00e5ff] font-bold rounded">
+                        ● LIVE GTA 3RD-PERSON CHASE | ACTIVE TARGET LOCK
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ── STAGE 1 PROMPT: INSPECT NEURAL PERCEPTION HUD? ── */}
+              {stage >= 1 && (
+                <div className="mb-6 pt-4 border-t border-[#1e293b]/70">
+                  <div className="flex items-center flex-wrap gap-2 text-sm text-slate-200">
+                    <span className="text-[#00ff9d] font-bold">root@rover:~#</span>
+                    <span>Inspect neural perception HUD? [Y/N]:</span>
+                    {userChoices[1] ? (
+                      <span className="text-[#00ff9d] font-bold"> {userChoices[1]}</span>
+                    ) : (
+                      <>
+                        <span className="inline-block w-2.5 h-4 bg-[#00ff9d] cursor-blink align-middle ml-1"></span>
+                        <span className="inline-flex items-center gap-1.5 ml-2">
+                          <button
+                            onClick={() => advanceStage('Y')}
+                            className="bg-[#00ff9d]/15 hover:bg-[#00ff9d] text-[#00ff9d] hover:text-[#05080c] border border-[#00ff9d] text-xs font-bold px-2.5 py-0.5 rounded transition"
+                          >
+                            [ Y ] Proceed
+                          </button>
+                          <button
+                            onClick={() => advanceStage('N')}
+                            className="bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600 text-xs font-bold px-2 py-0.5 rounded transition"
+                          >
+                            [ N ] Skip
+                          </button>
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* ── STAGE 2: HIGH-RES HUD TELEMETRY IMAGE REVEAL ── */}
+                  {stage >= 2 && (
+                    <div className="mt-4 transition-all duration-300">
+                      <div className="text-xs text-[#00e5ff] font-bold mb-1.5 tracking-wider uppercase">
+                        02 // REAL-TIME PERCEPTION HUD & RADAR MINIMAP
+                      </div>
+                      <div className="relative rounded overflow-hidden border border-[#00e5ff]/50 shadow-[0_0_24px_rgba(0,229,255,0.2)] bg-black">
+                        <img
+                          src="hud_telemetry.png"
+                          alt="Neural Perception HUD Telemetry"
+                          className="w-full max-h-[480px] object-contain"
+                        />
+                        <div className="absolute bottom-3 left-3 bg-[#05080c]/85 border border-[#00ff9d]/40 px-2.5 py-1 text-[11px] text-[#00ff9d] font-bold rounded">
+                          ✔ YOLOv8 CORNER BRACKETS + ZERO-SHOT CLIP VLM BARS
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── STAGE 2 PROMPT: INITIALIZE BARE-METAL DEPLOYMENT? ── */}
+              {stage >= 2 && (
+                <div className="mb-6 pt-4 border-t border-[#1e293b]/70">
+                  <div className="flex items-center flex-wrap gap-2 text-sm text-slate-200">
+                    <span className="text-[#00ff9d] font-bold">root@rover:~#</span>
+                    <span>Initialize bare-metal deployment? [Y/N]:</span>
+                    {userChoices[2] ? (
+                      <span className="text-[#00ff9d] font-bold"> {userChoices[2]}</span>
+                    ) : (
+                      <>
+                        <span className="inline-block w-2.5 h-4 bg-[#00ff9d] cursor-blink align-middle ml-1"></span>
+                        <span className="inline-flex items-center gap-1.5 ml-2">
+                          <button
+                            onClick={() => advanceStage('Y')}
+                            className="bg-[#00ff9d]/15 hover:bg-[#00ff9d] text-[#00ff9d] hover:text-[#05080c] border border-[#00ff9d] text-xs font-bold px-2.5 py-0.5 rounded transition"
+                          >
+                            [ Y ] Proceed
+                          </button>
+                          <button
+                            onClick={() => advanceStage('N')}
+                            className="bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600 text-xs font-bold px-2 py-0.5 rounded transition"
+                          >
+                            [ N ] Skip
+                          </button>
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* ── STAGE 3: SEQUENTIAL INSTALLATION COMMANDS REVEAL ── */}
+                  {stage >= 3 && (
+                    <div className="mt-4 transition-all duration-300">
+                      <div className="text-xs text-[#00e5ff] font-bold mb-2 tracking-wider uppercase">
+                        03 // LOCAL SYSTEM DEPENDENCY CHAIN
+                      </div>
+                      
+                      <CommandCard
+                        tag="01 // REPOSITORY INGESTION"
+                        command="git clone https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git && cd Autonomous-Patrol-Rover"
+                        feedback="✔ Repository cloned and synced to main."
+                      />
+
+                      <CommandCard
+                        tag="02 // SIMULATION SUITE"
+                        command="brew install --cask webots"
+                        note="macOS (or: sudo snap install webots)"
+                        feedback="✔ Webots 60 FPS rigid-body simulator linked."
+                      />
+
+                      <CommandCard
+                        tag="03 // GLOBAL BARE-METAL REGISTRATION"
+                        command="uv tool install --editable ."
+                        note="Registers global 'patrol-rover' binary via uv"
+                        feedback="✔ 'patrol-rover' linked globally to system PATH."
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── STAGE 3 PROMPT: EXECUTE MISSION CONTROL? ── */}
+              {stage >= 3 && (
+                <div className="mb-4 pt-4 border-t border-[#1e293b]/70">
+                  <div className="flex items-center flex-wrap gap-2 text-sm text-slate-200">
+                    <span className="text-[#00ff9d] font-bold">root@rover:~#</span>
+                    <span>Execute Mission Control? [Y/N]:</span>
+                    {userChoices[3] ? (
+                      <span className="text-[#00ff9d] font-bold"> {userChoices[3]}</span>
+                    ) : (
+                      <>
+                        <span className="inline-block w-2.5 h-4 bg-[#00ff9d] cursor-blink align-middle ml-1"></span>
+                        <span className="inline-flex items-center gap-1.5 ml-2">
+                          <button
+                            onClick={() => advanceStage('Y')}
+                            className="bg-[#00ff9d]/15 hover:bg-[#00ff9d] text-[#00ff9d] hover:text-[#05080c] border border-[#00ff9d] text-xs font-bold px-2.5 py-0.5 rounded transition"
+                          >
+                            [ Y ] Proceed
+                          </button>
+                          <button
+                            onClick={() => advanceStage('N')}
+                            className="bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600 text-xs font-bold px-2 py-0.5 rounded transition"
+                          >
+                            [ N ] Skip
+                          </button>
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* ── STAGE 4: LAUNCH COMMAND & BUTTON REVEAL ── */}
+                  {stage >= 4 && (
+                    <div className="mt-4 transition-all duration-300">
+                      <div className="text-xs text-[#00e5ff] font-bold mb-2 tracking-wider uppercase">
+                        04 // RUNTIME INITIALIZATION
+                      </div>
+
+                      <CommandCard
+                        tag="04 // DUAL PROCESS EXECUTION"
+                        command={`patrol-rover\nwebots worlds/ai_arena.wbt`}
+                        note="Terminal 1: FastAPI server | Terminal 2: 3D Physics Arena"
+                        feedback="✔ Systems calibrated. Mission Control online at http://127.0.0.1:7860"
+                      />
+
+                      <div className="mt-6 pt-2">
+                        <a
+                          href="/"
+                          className="inline-flex items-center gap-3 bg-[#00ff9d] hover:bg-[#3affb6] text-[#05080c] font-black text-base px-7 py-4 rounded-sm shadow-[0_0_28px_rgba(0,255,157,0.5)] hover:shadow-[0_0_36px_rgba(0,255,157,0.7)] transition-all transform hover:-translate-y-0.5 font-mono"
+                        >
+                          <span>🚀 LAUNCH MISSION CONTROL HUD</span>
+                          <span className="text-xs bg-[#05080c] text-[#00ff9d] px-2 py-0.5 rounded font-bold font-mono">127.0.0.1:7860</span>
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+            </div>
+
+            {/* Minimalist Footer with Single Clean SVG GitHub Icon */}
+            <footer className="mt-14 pt-6 border-t border-[#1e293b] flex items-center justify-center text-slate-500">
+              <a
+                href="https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="View Source on GitHub"
+                className="hover:text-[#00ff9d] transition-all transform hover:scale-110"
+              >
+                <svg className="w-7 h-7 fill-current" viewBox="0 0 24 24">
+                  <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+                </svg>
+              </a>
+            </footer>
+
+          </div>
+        </div>
+      );
+    }
+
+    // Mount to DOM Root
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

@@ -9,7 +9,7 @@ WorldInfo {
 }
 Viewpoint {
   orientation 1 0 0 0.92
-  position 128325961.6152533 -3 2.8
+  position 4.890420580596893e+18 -3 2.8
 }
 Background {
   skyColor [
@@ -1153,8 +1153,6 @@ DEF ROVER Robot {
           density -1
           mass 0.15
         }
-        linearVelocity -1.707346484870534e-05 -1.748897011902035e-05 -1.7449346432887197e-05
-        angularVelocity -0.08753428605656129 2.498462950776466 0.010712388521988967
       }
     }
     DEF RIGHT_WHEEL_HINGE HingeJoint {
@@ -1204,8 +1202,6 @@ DEF ROVER Robot {
           density -1
           mass 0.15
         }
-        linearVelocity -1.1242143022126152e-06 -1.7038554066407404e-05 3.0532078164924398e-06
-        angularVelocity -0.01758926603119743 0.4997021315762871 0.0022076928190035133
       }
     }
     DEF FRONT_CASTER Solid {

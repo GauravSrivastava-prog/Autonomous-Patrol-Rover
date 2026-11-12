@@ -89,6 +89,12 @@ def build_ensemble_text_embeddings(
             # Tokenize and encode
             inputs = processor(text=prompts, return_tensors="pt", padding=True).to(device)
             text_features = model.get_text_features(**inputs)
+            if hasattr(text_features, "text_embeds") and text_features.text_embeds is not None:
+                text_features = text_features.text_embeds
+            elif hasattr(text_features, "pooler_output") and text_features.pooler_output is not None:
+                text_features = text_features.pooler_output
+            elif isinstance(text_features, (list, tuple)) and len(text_features) > 0:
+                text_features = text_features[0]
 
             # L2 Normalize individual prompt embeddings
             text_features = text_features / text_features.norm(p=2, dim=-1, keepdim=True)
@@ -134,6 +140,12 @@ def evaluate_test_dataset(
                 img = Image.open(img_path).convert("RGB")
                 inputs = processor(images=img, return_tensors="pt").to(device)
                 img_features = model.get_image_features(**inputs)
+                if hasattr(img_features, "image_embeds") and img_features.image_embeds is not None:
+                    img_features = img_features.image_embeds
+                elif hasattr(img_features, "pooler_output") and img_features.pooler_output is not None:
+                    img_features = img_features.pooler_output
+                elif isinstance(img_features, (list, tuple)) and len(img_features) > 0:
+                    img_features = img_features[0]
                 img_features = img_features / img_features.norm(p=2, dim=-1, keepdim=True)
                 img_vec = img_features.cpu().numpy().squeeze(0)  # (embedding_dim,)
 

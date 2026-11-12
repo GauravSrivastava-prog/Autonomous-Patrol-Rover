@@ -21,6 +21,21 @@ Architecture:
 
 import os
 import sys
+import logging
+import warnings
+
+# Suppress runtime warnings and noisy library loggers
+warnings.filterwarnings("ignore")
+try:
+    from transformers.utils import logging as tf_logging
+    tf_logging.set_verbosity_error()
+except Exception:
+    pass
+for _log in ("transformers", "ultralytics", "torch"):
+    logging.getLogger(_log).setLevel(logging.ERROR)
+
+logger = logging.getLogger("patrol_rover.core_engine")
+logger.setLevel(logging.WARNING)
 
 # Direct Ultralytics config to /tmp to prevent sandbox permission warnings
 os.environ.setdefault("YOLO_CONFIG_DIR", "/tmp/ultralytics")
@@ -238,10 +253,10 @@ class MultimodalPerceptionEngine:
                         if embeddings:
                             self.semantic_cache = {"embeddings": embeddings}
                             self.cache_source = f"{cp.name} ({len(embeddings)} classes)"
-                            print(f"✅ [CLIP Cache] Loaded {len(embeddings)} class embeddings from {cp}")
+                            logger.debug(f"Loaded {len(embeddings)} class embeddings from {cp}")
                             break
                 except Exception as cache_err:
-                    print(f"⚠️ [CLIP Cache] Failed to load {cp}: {cache_err}")
+                    logger.debug(f"Failed to load {cp}: {cache_err}")
 
             # ──────────────────────────────────────────────────────────────
             # 2. Load YOLOv8 Detector (PyTorch map_location MPS/CPU -> ONNX -> Base)
@@ -261,14 +276,14 @@ class MultimodalPerceptionEngine:
                     continue
                 try:
                     size_mb = pt_path.stat().st_size / (1024 * 1024)
-                    print(f"📦 Found tuned YOLO checkpoint: {pt_path} ({size_mb:.2f} MB)")
+                    logger.debug(f"Found tuned YOLO checkpoint: {pt_path} ({size_mb:.2f} MB)")
                     from ultralytics import YOLO
 
                     # Safe pre-check: verify deserialization without CUDA hardware crash
                     try:
                         _ = torch.load(pt_path, map_location="cpu", weights_only=False)
                     except Exception as torch_load_err:
-                        print(f"⚠️ Pre-flight torch.load warning: {torch_load_err}")
+                        logger.debug(f"Pre-flight torch.load warning: {torch_load_err}")
 
                     yolo = YOLO(str(pt_path))
                     # Map to Apple Silicon Metal (MPS) or CPU
@@ -278,7 +293,7 @@ class MultimodalPerceptionEngine:
                             yolo.to("mps")
                             model_dev = "mps"
                         except Exception as mps_err:
-                            print(f"⚠️ MPS pinning deferred ({mps_err}); executing on CPU")
+                            logger.debug(f"MPS pinning deferred ({mps_err}); executing on CPU")
                             yolo.to("cpu")
                     elif self.device == "cuda" and torch.cuda.is_available():
                         yolo.to("cuda")
@@ -288,10 +303,10 @@ class MultimodalPerceptionEngine:
 
                     self.yolo_model = yolo
                     self.yolo_source = f"TUNED_PT ({size_mb:.1f}MB, {model_dev.upper()})"
-                    print(f"✅ Loaded YOLOv8 Tuned Model: {pt_path} on {model_dev.upper()}")
+                    logger.debug(f"Loaded YOLOv8 Tuned Model: {pt_path} on {model_dev.upper()}")
                     break
                 except Exception as pt_err:
-                    print(f"⚠️ PyTorch .pt load failed ({pt_path}): {pt_err}. Testing ONNX fallback...")
+                    logger.debug(f"PyTorch .pt load failed ({pt_path}): {pt_err}. Testing ONNX fallback...")
 
             # Priority B: ONNX Runtime Fallback if .pt failed or absent
             if self.yolo_model is None:
@@ -300,15 +315,15 @@ class MultimodalPerceptionEngine:
                         continue
                     try:
                         size_mb = onnx_path.stat().st_size / (1024 * 1024)
-                        print(f"🔄 Engaging ONNX Runtime fallback: {onnx_path} ({size_mb:.2f} MB)")
+                        logger.debug(f"Engaging ONNX Runtime fallback: {onnx_path} ({size_mb:.2f} MB)")
                         from ultralytics import YOLO
                         yolo_onnx = YOLO(str(onnx_path), task="detect")
                         self.yolo_model = yolo_onnx
                         self.yolo_source = f"TUNED_ONNX ({size_mb:.1f}MB)"
-                        print(f"✅ Loaded YOLOv8 ONNX Runtime Model: {onnx_path}")
+                        logger.debug(f"Loaded YOLOv8 ONNX Runtime Model: {onnx_path}")
                         break
                     except Exception as onnx_err:
-                        print(f"⚠️ ONNX Runtime load failed ({onnx_path}): {onnx_err}")
+                        logger.debug(f"ONNX Runtime load failed ({onnx_path}): {onnx_err}")
 
             # Priority C: Baseline yolov8n.pt Fallback
             if self.yolo_model is None:
@@ -326,9 +341,9 @@ class MultimodalPerceptionEngine:
                         yolo_base.to("cpu")
                     self.yolo_model = yolo_base
                     self.yolo_source = f"BASE_YOLOV8N ({self.device.upper()})"
-                    print(f"ℹ️ Loaded baseline yolov8n.pt on {self.device.upper()}")
+                    logger.debug(f"Loaded baseline yolov8n.pt on {self.device.upper()}")
                 except Exception as base_err:
-                    print(f"ℹ️ Baseline YOLO deferred: {base_err}")
+                    logger.debug(f"Baseline YOLO deferred: {base_err}")
                     self.yolo_source = "GEOMETRIC_FALLBACK"
 
             # ──────────────────────────────────────────────────────────────
@@ -336,12 +351,16 @@ class MultimodalPerceptionEngine:
             # ──────────────────────────────────────────────────────────────
             try:
                 from transformers import CLIPModel, CLIPProcessor
-                self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
-                self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+                try:
+                    self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", local_files_only=True).to(self.device)
+                    self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", local_files_only=True)
+                except Exception:
+                    self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
+                    self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
                 self.clip_model.eval()
-                print(f"✅ Loaded OpenAI CLIP transformer on {self.device.upper()}")
+                logger.debug(f"Loaded OpenAI CLIP transformer on {self.device.upper()}")
             except Exception as e:
-                print(f"ℹ️ OpenAI CLIP transformer deferred: {e}")
+                logger.debug(f"OpenAI CLIP transformer deferred: {e}")
 
             self.is_loaded = True
 
@@ -364,6 +383,15 @@ class MultimodalPerceptionEngine:
                 inputs = self.clip_processor(text=[clean_p], return_tensors="pt", padding=True).to(self.device)
                 with torch.no_grad():
                     text_features = self.clip_model.get_text_features(**inputs)
+                    # Extract raw tensor from transformers v5+ BaseModelOutputWithPooling / dataclass
+                    if hasattr(text_features, "text_embeds") and text_features.text_embeds is not None:
+                        text_features = text_features.text_embeds
+                    elif hasattr(text_features, "image_embeds") and text_features.image_embeds is not None:
+                        text_features = text_features.image_embeds
+                    elif hasattr(text_features, "pooler_output") and text_features.pooler_output is not None:
+                        text_features = text_features.pooler_output
+                    elif isinstance(text_features, (list, tuple)) and len(text_features) > 0:
+                        text_features = text_features[0]
                     text_features = text_features / text_features.norm(p=2, dim=-1, keepdim=True)
                     prompt_vec = text_features.detach().cpu().numpy().squeeze(0)
 
@@ -384,7 +412,7 @@ class MultimodalPerceptionEngine:
                     scores[key] = max(0.08, min(0.96, sim))
                 return self._normalize_scores(scores)
             except Exception as clip_err:
-                print(f"ℹ️ Live CLIP inference fallback: {clip_err}")
+                logger.debug(f"Live CLIP inference fallback: {clip_err}")
 
         # Path 2: Fast Pre-computed Semantic Cache Keyword Lookup (<0.1ms)
         if self.semantic_cache and "embeddings" in self.semantic_cache:
@@ -440,9 +468,9 @@ class RobotController:
         (1.25, -1.25),
     ]
 
-    def __init__(self):
+    def __init__(self, init_perception: bool = True):
         self.state = RobotState()
-        self.perception = MultimodalPerceptionEngine(NEURAL_DEVICE)
+        self.perception = MultimodalPerceptionEngine(NEURAL_DEVICE) if init_perception else None
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self.perception_thread: Optional[threading.Thread] = None
@@ -454,6 +482,7 @@ class RobotController:
         # Frame buffers
         self.latest_rgb: bytes = b""
         self.latest_depth: bytes = b""
+        self.latest_clean_frame: Optional[np.ndarray] = None
         self.frame_counter = 0
         self.last_fps_time = time.time()
 
@@ -465,8 +494,9 @@ class RobotController:
             self.running = True
             self.thread = threading.Thread(target=self._loop, daemon=True)
             self.thread.start()
-            self.perception_thread = threading.Thread(target=self._perception_loop, daemon=True)
-            self.perception_thread.start()
+            if self.perception:
+                self.perception_thread = threading.Thread(target=self._perception_loop, daemon=True)
+                self.perception_thread.start()
 
     def stop(self):
         self.running = False
@@ -478,32 +508,39 @@ class RobotController:
     def _perception_loop(self):
         """Asynchronous perception worker: runs YOLOv8 at ~8 Hz without stalling 30 FPS graphics."""
         while self.running:
-            time.sleep(0.12)
+            time.sleep(0.10)
             if not self.perception.is_loaded or self.perception.yolo_model is None:
                 continue
 
             with self.state.lock:
-                frame_bytes = self.latest_rgb
+                clean_img = self.latest_clean_frame.copy() if self.latest_clean_frame is not None else None
 
-            if not frame_bytes:
+            if clean_img is None:
                 continue
 
             try:
-                nparr = np.frombuffer(frame_bytes, np.uint8)
-                img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if img_bgr is None:
-                    continue
+                h, w = clean_img.shape[:2]
+                small_img = cv2.resize(clean_img, (640, 360))
 
-                h, w = img_bgr.shape[:2]
-                small_img = cv2.resize(img_bgr, (640, 360))
-
-                # Safe prediction execution
-                results = self.perception.yolo_model.predict(
-                    small_img,
-                    conf=0.25,
-                    verbose=False,
-                    device="mps" if self.perception.device == "mps" and torch.backends.mps.is_available() else "cpu"
-                )
+                # Safe MPS-first prediction execution with CPU fallback
+                dev = "mps" if self.perception.device == "mps" and torch.backends.mps.is_available() else "cpu"
+                try:
+                    results = self.perception.yolo_model.predict(
+                        small_img,
+                        conf=0.20,
+                        verbose=False,
+                        device=dev
+                    )
+                except Exception as pred_mps_err:
+                    if dev == "mps":
+                        results = self.perception.yolo_model.predict(
+                            small_img,
+                            conf=0.20,
+                            verbose=False,
+                            device="cpu"
+                        )
+                    else:
+                        raise pred_mps_err
 
                 detections = []
                 if results and len(results) > 0:
@@ -712,31 +749,37 @@ class RobotController:
                 if len(self.state.trail) > 160:
                     self.state.trail.pop(0)
 
-    # ── 3D Perspective Projection Mathematics ──
-    def _project_point(self, px: float, py: float, pz: float,
-                       cam_x: float, cam_y: float, cam_z: float,
-                       cam_yaw: float, pitch: float) -> Optional[Tuple[int, int, float]]:
+    # ── 3D Perspective Projection Mathematics & Wall Clipping ──
+    def _to_cam(self, px: float, py: float, pz: float,
+                cam_x: float, cam_y: float, cam_z: float,
+                cam_yaw: float, pitch: float) -> Tuple[float, float, float]:
         dx = px - cam_x
         dy = py - cam_y
         dz = pz - cam_z
-
         cos_y, sin_y = math.cos(cam_yaw), math.sin(cam_yaw)
         fwd = dx * cos_y + dy * sin_y
         lat = -dx * sin_y + dy * cos_y
-
         cos_p, sin_p = math.cos(pitch), math.sin(pitch)
         z_cam = fwd * cos_p + dz * sin_p
         y_cam = -fwd * sin_p + dz * cos_p
         x_cam = lat
+        return x_cam, y_cam, z_cam
 
+    def _cam_to_screen(self, x_cam: float, y_cam: float, z_cam: float) -> Tuple[int, int]:
+        sx = int(CAMERA_W / 2.0 - (x_cam / max(0.01, z_cam)) * FOCAL_LENGTH)
+        sy = int(CAMERA_H / 2.0 - (y_cam / max(0.01, z_cam)) * FOCAL_LENGTH)
+        return sx, sy
+
+    def _project_point(self, px: float, py: float, pz: float,
+                       cam_x: float, cam_y: float, cam_z: float,
+                       cam_yaw: float, pitch: float) -> Optional[Tuple[int, int, float]]:
+        x_cam, y_cam, z_cam = self._to_cam(px, py, pz, cam_x, cam_y, cam_z, cam_yaw, pitch)
         if z_cam <= 0.12:
             return None
-
-        sx = int(CAMERA_W / 2.0 - (x_cam / z_cam) * FOCAL_LENGTH)
-        sy = int(CAMERA_H / 2.0 - (y_cam / z_cam) * FOCAL_LENGTH)
+        sx, sy = self._cam_to_screen(x_cam, y_cam, z_cam)
         return sx, sy, z_cam
 
-    # ── 1280x720 HD GTA Chase Graphics Engine ──
+    # ── 1280x720 HD GTA Chase Graphics Engine (Solid Room & Military Rover) ──
     def _render_frames(self):
         with self.state.lock:
             rx, ry, ryaw = self.state.x, self.state.y, self.state.yaw
@@ -748,8 +791,8 @@ class RobotController:
             wheel_l = self.state.wheel_angle_l
             wheel_r = self.state.wheel_angle_r
 
-        # Canvas setup: Deep synthwave noir
-        frame = np.full((CAMERA_H, CAMERA_W, 3), (12, 10, 8), dtype=np.uint8)
+        # Canvas setup: Solid indoor laboratory ceiling / upper wall fill (zero black void)
+        frame = np.full((CAMERA_H, CAMERA_W, 3), (180, 185, 192), dtype=np.uint8)
 
         # ── Step 1: Camera Rig Tuning (The True GTA Feel) ──
         if view_mode == "TPP":
@@ -770,20 +813,18 @@ class RobotController:
             cam_pitch = 0.02
             horizon_y = int(CAMERA_H / 2.0)
 
-        # Sky gradient above horizon
-        if horizon_y > 0:
-            for y in range(min(CAMERA_H, max(0, horizon_y))):
-                ratio = y / max(1, horizon_y)
-                b = int(22 + ratio * 16)
-                g = int(14 + ratio * 12)
-                r = int(10 + ratio * 8)
-                frame[y, :] = (b, g, r)
+        # Draw Visible Overhead LED Light Troffers on Ceiling
+        if horizon_y > 40:
+            cv2.rectangle(frame, (int(CAMERA_W * 0.22), 20), (int(CAMERA_W * 0.42), 55), (255, 255, 250), -1)
+            cv2.rectangle(frame, (int(CAMERA_W * 0.22), 20), (int(CAMERA_W * 0.42), 55), (140, 145, 150), 2)
+            cv2.rectangle(frame, (int(CAMERA_W * 0.58), 20), (int(CAMERA_W * 0.78), 55), (255, 255, 250), -1)
+            cv2.rectangle(frame, (int(CAMERA_W * 0.58), 20), (int(CAMERA_W * 0.78), 55), (140, 145, 150), 2)
 
-        # Horizon Line (faint glowing cyan/amber separator)
+        # Fill Ground with Solid Reflective Dark Polished Concrete (From Horizon down)
         if 0 <= horizon_y < CAMERA_H:
-            cv2.line(frame, (0, horizon_y), (CAMERA_W, horizon_y), (120, 85, 30), 1)
+            cv2.rectangle(frame, (0, horizon_y), (CAMERA_W, CAMERA_H), (45, 45, 48), -1)
 
-        # ── Step 2: High-Contrast Perspective Floor Grid ──
+        # ── Step 2: High-Contrast Perspective Floor Grid & Markings ──
         grid_step = 0.40
         num_grid = int(ARENA_BOUND / grid_step)
         for i in range(-num_grid, num_grid + 1):
@@ -791,8 +832,7 @@ class RobotController:
             p1 = self._project_point(gx, -ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
             p2 = self._project_point(gx, ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
             if p1 and p2:
-                # Highlight center crosshair lines
-                color = (75, 60, 40) if i != 0 else (140, 100, 30)
+                color = (65, 68, 74) if i != 0 else (90, 95, 105)
                 thickness = 2 if i == 0 else 1
                 cv2.line(frame, (p1[0], p1[1]), (p2[0], p2[1]), color, thickness)
 
@@ -801,35 +841,86 @@ class RobotController:
             p1 = self._project_point(-ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
             p2 = self._project_point(ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
             if p1 and p2:
-                color = (75, 60, 40) if j != 0 else (140, 100, 30)
+                color = (65, 68, 74) if j != 0 else (90, 95, 105)
                 thickness = 2 if j == 0 else 1
                 cv2.line(frame, (p1[0], p1[1]), (p2[0], p2[1]), color, thickness)
 
-        # ── Step 3: Arena Perimeter Boundary (Amber Top Rails & Glass Walls) ──
+        # Center Floor Ring & Amber Boundary Line
+        c_proj = self._project_point(0, 0, 0.001, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+        if c_proj:
+            scale_c = FOCAL_LENGTH / max(0.1, c_proj[2])
+            cv2.circle(frame, (c_proj[0], c_proj[1]), max(8, int(0.45 * scale_c)), (85, 90, 100), 2)
+
+        # ── Step 3: Solid Enclosing Facility Walls (2.4m High, Clipped to Near-Plane) ──
         wall_pts = [
             (-ARENA_BOUND, -ARENA_BOUND),
             (ARENA_BOUND, -ARENA_BOUND),
             (ARENA_BOUND, ARENA_BOUND),
             (-ARENA_BOUND, ARENA_BOUND),
         ]
-        wall_h = 0.45
+        wall_h = 2.40
+        baseboard_h = 0.14
+        near_z = 0.12
+
         for idx in range(4):
             x1, y1 = wall_pts[idx]
             x2, y2 = wall_pts[(idx + 1) % 4]
-            b1 = self._project_point(x1, y1, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            b2 = self._project_point(x2, y2, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            t1 = self._project_point(x1, y1, wall_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            t2 = self._project_point(x2, y2, wall_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            if b1 and b2 and t1 and t2:
-                # Translucent glass wall facet
-                wall_poly = np.array([[b1[0], b1[1]], [b2[0], b2[1]], [t2[0], t2[1]], [t1[0], t1[1]]], dtype=np.int32)
-                sub_img = frame.copy()
-                cv2.fillPoly(sub_img, [wall_poly], (35, 25, 20))
-                cv2.addWeighted(sub_img, 0.35, frame, 0.65, 0, frame)
-                # Glowing amber top rail
-                cv2.line(frame, (t1[0], t1[1]), (t2[0], t2[1]), (30, 180, 255), 2)
-                # Bottom base seal
-                cv2.line(frame, (b1[0], b1[1]), (b2[0], b2[1]), (60, 45, 30), 1)
+
+            # Bottom corners in camera space
+            xc1, yc1, zc1 = self._to_cam(x1, y1, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            xc2, yc2, zc2 = self._to_cam(x2, y2, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            # Top corners in camera space
+            xt1, yt1, zt1 = self._to_cam(x1, y1, wall_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            xt2, yt2, zt2 = self._to_cam(x2, y2, wall_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            # Baseboard top corners
+            xbb1, ybb1, zbb1 = self._to_cam(x1, y1, baseboard_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            xbb2, ybb2, zbb2 = self._to_cam(x2, y2, baseboard_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+
+            if zc1 < near_z and zc2 < near_z:
+                continue  # Wall is entirely behind camera
+
+            # Near-plane clipping for continuous solid walls
+            if zc1 < near_z:
+                t = (near_z - zc1) / (zc2 - zc1)
+                xc1 = xc1 + t * (xc2 - xc1)
+                yc1 = yc1 + t * (yc2 - yc1)
+                zc1 = near_z
+                xt1 = xt1 + t * (xt2 - xt1)
+                yt1 = yt1 + t * (yt2 - yt1)
+                zt1 = near_z
+                xbb1 = xbb1 + t * (xbb2 - xbb1)
+                ybb1 = ybb1 + t * (ybb2 - ybb1)
+                zbb1 = near_z
+            elif zc2 < near_z:
+                t = (near_z - zc2) / (zc1 - zc2)
+                xc2 = xc2 + t * (xc1 - xc2)
+                yc2 = yc2 + t * (yc1 - yc2)
+                zc2 = near_z
+                xt2 = xt2 + t * (xt1 - xt2)
+                yt2 = yt2 + t * (yt1 - yt2)
+                zt2 = near_z
+                xbb2 = xbb2 + t * (xbb1 - xbb2)
+                ybb2 = ybb2 + t * (ybb1 - ybb2)
+                zbb2 = near_z
+
+            p_b1 = self._cam_to_screen(xc1, yc1, zc1)
+            p_b2 = self._cam_to_screen(xc2, yc2, zc2)
+            p_t1 = self._cam_to_screen(xt1, yt1, zt1)
+            p_t2 = self._cam_to_screen(xt2, yt2, zt2)
+            p_bb1 = self._cam_to_screen(xbb1, ybb1, zbb1)
+            p_bb2 = self._cam_to_screen(xbb2, ybb2, zbb2)
+
+            # Solid architectural facility wall (clean matte off-white drywall)
+            wall_poly = np.array([p_b1, p_b2, p_t2, p_t1], dtype=np.int32)
+            cv2.fillPoly(frame, [wall_poly], (235, 238, 240))
+            # Dark graphite baseboard
+            bb_poly = np.array([p_b1, p_b2, p_bb2, p_bb1], dtype=np.int32)
+            cv2.fillPoly(frame, [bb_poly], (30, 32, 35))
+            cv2.line(frame, p_bb1, p_bb2, (50, 52, 56), 1)
+            # High-vis yellow/amber hazard safety coping
+            cv2.line(frame, p_t1, p_t2, (25, 195, 245), 3)
+            # Wall perimeter edge seam
+            cv2.polylines(frame, [wall_poly], True, (190, 195, 200), 1)
 
         # ── Step 4: Depth-Sorted Rendering of 3D Objects & Rover (Painter's Algorithm) ──
         render_queue = []
@@ -867,8 +958,51 @@ class RobotController:
                 self._render_3d_rover(frame, rx, ry, ryaw, vl, vr, wheel_l, wheel_r,
                                       cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
 
+        # Store clean un-annotated frame for perception worker & depth map
+        with self.state.lock:
+            self.latest_clean_frame = frame.copy()
+
+        # ── Step 4.5: Render Real-Time YOLO Bounding Boxes & Tactical Badges ──
+        disp_frame = frame.copy()
+        with self.state.lock:
+            cur_dets = list(self.state.yolo_detections)
+            cur_target = self.state.target_name.lower()
+
+        for det in cur_dets:
+            box = det.get("box", [])
+            if len(box) == 4:
+                x1, y1, x2, y2 = [int(v) for v in box]
+                label = str(det.get("label", "object"))
+                conf = float(det.get("conf", 0.0))
+
+                # Highlight if matches current chase target
+                is_target = cur_target != "none" and (label.lower() in cur_target or cur_target in label.lower())
+                color = (120, 255, 0) if is_target else (255, 229, 0)  # Neon Green / Neon Cyan (BGR)
+
+                # Bounding box border
+                cv2.rectangle(disp_frame, (x1, y1), (x2, y2), color, 1)
+
+                # Tactical Corner Brackets (GTA / Cyberpunk style)
+                c_len = min(16, max(6, (x2 - x1) // 4, (y2 - y1) // 4))
+                cv2.line(disp_frame, (x1, y1), (x1 + c_len, y1), color, 2)
+                cv2.line(disp_frame, (x1, y1), (x1, y1 + c_len), color, 2)
+                cv2.line(disp_frame, (x2, y1), (x2 - c_len, y1), color, 2)
+                cv2.line(disp_frame, (x2, y1), (x2, y1 + c_len), color, 2)
+                cv2.line(disp_frame, (x1, y2), (x1 + c_len, y2), color, 2)
+                cv2.line(disp_frame, (x1, y2), (x1, y2 - c_len), color, 2)
+                cv2.line(disp_frame, (x2, y2), (x2 - c_len, y2), color, 2)
+                cv2.line(disp_frame, (x2, y2), (x2, y2 - c_len), color, 2)
+
+                # Tactical Label Pill
+                tag = f"🎯 {label.upper()} {int(conf * 100)}%"
+                (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+                tag_y = max(y1 - 6, th + 8)
+                cv2.rectangle(disp_frame, (x1, tag_y - th - 5), (x1 + tw + 10, tag_y + 3), (11, 18, 32), -1)
+                cv2.rectangle(disp_frame, (x1, tag_y - th - 5), (x1 + tw + 10, tag_y + 3), color, 1)
+                cv2.putText(disp_frame, tag, (x1 + 5, tag_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+
         # ── Step 5: Encode Final 1280x720 Widescreen JPEG ──
-        _, rgb_enc = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 84])
+        _, rgb_enc = cv2.imencode(".jpg", disp_frame, [cv2.IMWRITE_JPEG_QUALITY, 84])
         self.latest_rgb = rgb_enc.tobytes()
 
         # ── Step 6: Generate Real-Time Monocular MAGMA Depth Map ──
@@ -881,7 +1015,7 @@ class RobotController:
         _, depth_enc = cv2.imencode(".jpg", depth_color, [cv2.IMWRITE_JPEG_QUALITY, 80])
         self.latest_depth = depth_enc.tobytes()
 
-    # ── 3D Object Rendering Helper (Extrusion, Specular Shading & Floor Shadow) ──
+    # ── Realistic 3D Asset Rendering Engine (Traffic Cone, Potted Plant, Chair, Crates, Hazard Box) ──
     def _render_3d_object(self, frame, obj: ArenaObject, key: str, target_key: str,
                           cam_x, cam_y, cam_z, cam_yaw, cam_pitch):
         b_proj = self._project_point(obj.x, obj.y, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
@@ -892,72 +1026,249 @@ class RobotController:
         bx, by, bz = b_proj
         tx, ty, tz = t_proj
 
-        # Scale factor
         scale = FOCAL_LENGTH / max(0.1, bz)
         r_px = max(6, int(obj.radius * scale))
 
-        # 1. Soft Oval Floor Shadow below object
+        # 1. Soft Realistic Ground Contact Shadow
         shadow_overlay = frame.copy()
-        cv2.ellipse(shadow_overlay, (bx, by), (r_px + 6, max(3, int(r_px * 0.45))),
+        cv2.ellipse(shadow_overlay, (bx, by), (r_px + 8, max(4, int(r_px * 0.45))),
                     0, 0, 360, (0, 0, 0), -1)
-        cv2.addWeighted(shadow_overlay, 0.45, frame, 0.55, 0, frame)
+        cv2.addWeighted(shadow_overlay, 0.48, frame, 0.52, 0, frame)
 
-        # 2. Vertical Extruded Body Facets (Painter's algorithm cylinder/box)
-        num_facets = 12
-        facet_pts_b = []
-        facet_pts_t = []
-        for i in range(num_facets):
-            ang = (i / num_facets) * 2.0 * math.pi
-            ox = obj.x + obj.radius * math.cos(ang)
-            oy = obj.y + obj.radius * math.sin(ang)
-            pb = self._project_point(ox, oy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            pt = self._project_point(ox, oy, obj.height, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            if pb and pt:
-                facet_pts_b.append(pb)
-                facet_pts_t.append(pt)
+        # 2. Asset-Specific High-Fidelity 3D Geometry
+        if key == "RED":
+            # ── Traffic Cone: Heavy Square Rubber Base + Orange Cone + Dual White Collars ──
+            base_half = obj.radius * 1.05
+            base_corners = [
+                (obj.x - base_half, obj.y - base_half),
+                (obj.x + base_half, obj.y - base_half),
+                (obj.x + base_half, obj.y + base_half),
+                (obj.x - base_half, obj.y + base_half),
+            ]
+            base_pts = [self._project_point(cx, cy, 0.015, cam_x, cam_y, cam_z, cam_yaw, cam_pitch) for cx, cy in base_corners]
+            if all(base_pts):
+                poly = np.array([[p[0], p[1]] for p in base_pts], dtype=np.int32)
+                cv2.fillPoly(frame, [poly], (25, 25, 30))
+                cv2.polylines(frame, [poly], True, (50, 50, 55), 1)
 
-        if len(facet_pts_b) >= 3 and len(facet_pts_b) == len(facet_pts_t):
-            for i in range(len(facet_pts_b)):
-                j = (i + 1) % len(facet_pts_b)
-                poly = np.array([
-                    [facet_pts_b[i][0], facet_pts_b[i][1]],
-                    [facet_pts_b[j][0], facet_pts_b[j][1]],
-                    [facet_pts_t[j][0], facet_pts_t[j][1]],
-                    [facet_pts_t[i][0], facet_pts_t[i][1]],
-                ], dtype=np.int32)
+            # Orange Conical Body Facets
+            num_facets = 12
+            pts_bot, pts_top, pts_band1_b, pts_band1_t, pts_band2_b, pts_band2_t = [], [], [], [], [], []
+            for i in range(num_facets):
+                ang = (i / num_facets) * 2.0 * math.pi
+                cos_a, sin_a = math.cos(ang), math.sin(ang)
+                # Outer conical contour
+                pb = self._project_point(obj.x + obj.radius * 0.85 * cos_a, obj.y + obj.radius * 0.85 * sin_a, 0.02, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                pt = self._project_point(obj.x + obj.radius * 0.20 * cos_a, obj.y + obj.radius * 0.20 * sin_a, obj.height, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                p1b = self._project_point(obj.x + obj.radius * 0.65 * cos_a, obj.y + obj.radius * 0.65 * sin_a, obj.height * 0.35, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                p1t = self._project_point(obj.x + obj.radius * 0.52 * cos_a, obj.y + obj.radius * 0.52 * sin_a, obj.height * 0.50, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                p2b = self._project_point(obj.x + obj.radius * 0.40 * cos_a, obj.y + obj.radius * 0.40 * sin_a, obj.height * 0.65, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                p2t = self._project_point(obj.x + obj.radius * 0.30 * cos_a, obj.y + obj.radius * 0.30 * sin_a, obj.height * 0.78, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                if pb and pt: pts_bot.append(pb); pts_top.append(pt)
+                if p1b and p1t: pts_band1_b.append(p1b); pts_band1_t.append(p1t)
+                if p2b and p2t: pts_band2_b.append(p2b); pts_band2_t.append(p2t)
 
-                # Shading based on orientation
-                shade_factor = 0.65 + 0.35 * math.sin(i / len(facet_pts_b) * math.pi)
-                c_b = min(255, int(obj.bgr_color[0] * shade_factor))
-                c_g = min(255, int(obj.bgr_color[1] * shade_factor))
-                c_r = min(255, int(obj.bgr_color[2] * shade_factor))
-                cv2.fillPoly(frame, [poly], (c_b, c_g, c_r))
-                cv2.polylines(frame, [poly], True, (max(0, c_b - 20), max(0, c_g - 20), max(0, c_r - 20)), 1)
+            if len(pts_bot) >= 4:
+                # Main Orange Body
+                for i in range(len(pts_bot)):
+                    j = (i + 1) % len(pts_bot)
+                    poly = np.array([[pts_bot[i][0], pts_bot[i][1]], [pts_bot[j][0], pts_bot[j][1]],
+                                     [pts_top[j][0], pts_top[j][1]], [pts_top[i][0], pts_top[i][1]]], dtype=np.int32)
+                    shade = 0.70 + 0.30 * math.sin(i / len(pts_bot) * math.pi)
+                    cv2.fillPoly(frame, [poly], (int(10 * shade), int(85 * shade), int(245 * shade)))
 
-            # 3. Top Cap Ellipse
-            top_poly = np.array([[pt[0], pt[1]] for pt in facet_pts_t], dtype=np.int32)
-            cv2.fillPoly(frame, [top_poly], obj.bgr_color)
-            cv2.polylines(frame, [top_poly], True, (255, 255, 255), 1)
+                # Reflective White Collars
+                if len(pts_band1_b) == len(pts_bot):
+                    for i in range(len(pts_band1_b)):
+                        j = (i + 1) % len(pts_band1_b)
+                        poly1 = np.array([[pts_band1_b[i][0], pts_band1_b[i][1]], [pts_band1_b[j][0], pts_band1_b[j][1]],
+                                          [pts_band1_t[j][0], pts_band1_t[j][1]], [pts_band1_t[i][0], pts_band1_t[i][1]]], dtype=np.int32)
+                        cv2.fillPoly(frame, [poly1], (235, 235, 245))
+                if len(pts_band2_b) == len(pts_bot):
+                    for i in range(len(pts_band2_b)):
+                        j = (i + 1) % len(pts_band2_b)
+                        poly2 = np.array([[pts_band2_b[i][0], pts_band2_b[i][1]], [pts_band2_b[j][0], pts_band2_b[j][1]],
+                                          [pts_band2_t[j][0], pts_band2_t[j][1]], [pts_band2_t[i][0], pts_band2_t[i][1]]], dtype=np.int32)
+                        cv2.fillPoly(frame, [poly2], (235, 235, 245))
 
-        # 4. Target HUD Reticle (If active chase target)
+        elif key == "GREEN":
+            # ── Potted Plant: Terracotta Saucer/Pot + Woody Stems + Layered Foliage Canopy ──
+            pot_h = obj.height * 0.38
+            pts_pot_b, pts_pot_t = [], []
+            num_facets = 10
+            for i in range(num_facets):
+                ang = (i / num_facets) * 2.0 * math.pi
+                pb = self._project_point(obj.x + obj.radius * 0.75 * math.cos(ang), obj.y + obj.radius * 0.75 * math.sin(ang), 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                pt = self._project_point(obj.x + obj.radius * 0.85 * math.cos(ang), obj.y + obj.radius * 0.85 * math.sin(ang), pot_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                if pb and pt: pts_pot_b.append(pb); pts_pot_t.append(pt)
+
+            if len(pts_pot_b) >= 4:
+                for i in range(len(pts_pot_b)):
+                    j = (i + 1) % len(pts_pot_b)
+                    poly = np.array([[pts_pot_b[i][0], pts_pot_b[i][1]], [pts_pot_b[j][0], pts_pot_b[j][1]],
+                                     [pts_pot_t[j][0], pts_pot_t[j][1]], [pts_pot_t[i][0], pts_pot_t[i][1]]], dtype=np.int32)
+                    shade = 0.65 + 0.35 * math.sin(i / len(pts_pot_b) * math.pi)
+                    cv2.fillPoly(frame, [poly], (int(42 * shade), int(90 * shade), int(195 * shade)))  # Terracotta BGR
+
+                # Dark Potting Soil
+                top_poly = np.array([[p[0], p[1]] for p in pts_pot_t], dtype=np.int32)
+                cv2.fillPoly(frame, [top_poly], (25, 28, 35))
+
+            # Woody Branch
+            trunk_p = self._project_point(obj.x, obj.y, pot_h + 0.12, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            if trunk_p:
+                cv2.line(frame, (bx, by - int(pot_h * scale * 0.4)), (trunk_p[0], trunk_p[1]), (30, 60, 95), max(3, int(4 * scale / 900.0)))
+
+            # Lush Botanical Foliage Canopy (Clustered Leaf Spheres)
+            leaf_clusters = [
+                (0.00, 0.00, obj.height * 0.78, obj.radius * 0.95, (38, 175, 45)),
+                (-0.06, 0.04, obj.height * 0.68, obj.radius * 0.70, (28, 145, 35)),
+                (0.07, -0.05, obj.height * 0.70, obj.radius * 0.75, (52, 205, 60)),
+                (0.00, 0.03, obj.height * 0.92, obj.radius * 0.65, (45, 185, 52)),
+            ]
+            for lx, ly, lz, lr, col in leaf_clusters:
+                cp = self._project_point(obj.x + lx, obj.y + ly, lz, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                if cp:
+                    c_rad = max(6, int(lr * scale))
+                    cv2.circle(frame, (cp[0], cp[1]), c_rad, col, -1)
+                    cv2.circle(frame, (cp[0], cp[1]), c_rad, (int(col[0] * 0.7), int(col[1] * 0.7), int(col[2] * 0.7)), 1)
+
+        elif key == "BLUE":
+            # ── Office Chair: 5-Star Chrome Base + Lift Cylinder + Cobalt Blue Cushion + Backrest ──
+            # 5-Star Chrome Base
+            for i in range(5):
+                ang = (i / 5.0) * 2.0 * math.pi
+                leg_p = self._project_point(obj.x + obj.radius * 0.95 * math.cos(ang), obj.y + obj.radius * 0.95 * math.sin(ang), 0.02, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                if leg_p:
+                    cv2.line(frame, (bx, by), (leg_p[0], leg_p[1]), (210, 215, 225), max(2, int(3 * scale / 900.0)))
+                    cv2.circle(frame, (leg_p[0], leg_p[1]), max(2, int(0.025 * scale)), (30, 30, 35), -1)
+
+            # Chrome Pneumatic Cylinder
+            seat_z = obj.height * 0.48
+            seat_p = self._project_point(obj.x, obj.y, seat_z, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            if seat_p:
+                cv2.line(frame, (bx, by), (seat_p[0], seat_p[1]), (220, 225, 235), max(3, int(6 * scale / 900.0)))
+
+            # Cobalt Blue Ergonomic Seat Cushion
+            sc_half = obj.radius * 0.75
+            seat_corners = [
+                (obj.x - sc_half, obj.y - sc_half), (obj.x + sc_half, obj.y - sc_half),
+                (obj.x + sc_half, obj.y + sc_half), (obj.x - sc_half, obj.y + sc_half),
+            ]
+            sc_pts = [self._project_point(cx, cy, seat_z, cam_x, cam_y, cam_z, cam_yaw, cam_pitch) for cx, cy in seat_corners]
+            if all(sc_pts):
+                poly = np.array([[p[0], p[1]] for p in sc_pts], dtype=np.int32)
+                cv2.fillPoly(frame, [poly], (215, 90, 18))  # Deep Cobalt Blue BGR
+                cv2.polylines(frame, [poly], True, (245, 125, 45), 1)
+
+            # Curved Ergonomic Mesh Backrest
+            back_b = self._project_point(obj.x - sc_half * 0.8, obj.y, seat_z + 0.02, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            back_t = self._project_point(obj.x - sc_half * 0.8, obj.y, obj.height, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            if back_b and back_t:
+                bw = max(8, int(sc_half * 1.6 * scale))
+                bh = max(10, back_b[1] - back_t[1])
+                cv2.rectangle(frame, (back_t[0] - bw // 2, back_t[1]), (back_t[0] + bw // 2, back_b[1]), (235, 105, 25), -1)
+                cv2.rectangle(frame, (back_t[0] - bw // 2, back_t[1]), (back_t[0] + bw // 2, back_b[1]), (255, 150, 60), 1)
+
+        elif key.startswith("CRATE"):
+            # ── Wooden Supply Crate: Timber Planks + Cross Bracing + Corner Plates ──
+            cw = obj.radius * 0.95
+            ch = obj.height
+            c_bot = [
+                self._project_point(obj.x - cw, obj.y - cw, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x + cw, obj.y - cw, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x + cw, obj.y + cw, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x - cw, obj.y + cw, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+            ]
+            c_top = [
+                self._project_point(obj.x - cw, obj.y - cw, ch, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x + cw, obj.y - cw, ch, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x + cw, obj.y + cw, ch, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x - cw, obj.y + cw, ch, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+            ]
+            if all(c_bot) and all(c_top):
+                # 4 Sides
+                for i in range(4):
+                    j = (i + 1) % 4
+                    side_poly = np.array([[c_bot[i][0], c_bot[i][1]], [c_bot[j][0], c_bot[j][1]],
+                                          [c_top[j][0], c_top[j][1]], [c_top[i][0], c_top[i][1]]], dtype=np.int32)
+                    shade = 0.70 + 0.25 * (i % 2)
+                    cv2.fillPoly(frame, [side_poly], (int(55 * shade), int(110 * shade), int(160 * shade)))  # Timber Pine BGR
+                    # X-Bracing Planks
+                    cv2.line(frame, (c_bot[i][0], c_bot[i][1]), (c_top[j][0], c_top[j][1]), (35, 75, 115), 2)
+                    cv2.line(frame, (c_bot[j][0], c_bot[j][1]), (c_top[i][0], c_top[i][1]), (35, 75, 115), 2)
+                    cv2.polylines(frame, [side_poly], True, (30, 65, 95), 1)
+
+                # Top Face
+                top_poly = np.array([[p[0], p[1]] for p in c_top], dtype=np.int32)
+                cv2.fillPoly(frame, [top_poly], (65, 125, 180))
+                cv2.polylines(frame, [top_poly], True, (45, 85, 125), 1)
+
+        elif key == "HAZARD":
+            # ── Hazard Box: High-Vis Safety Yellow Enclosure + Black Chevrons + Chrome Latches ──
+            hw_x = obj.radius * 0.90
+            hw_y = obj.radius * 0.75
+            hh = obj.height
+            h_bot = [
+                self._project_point(obj.x - hw_x, obj.y - hw_y, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x + hw_x, obj.y - hw_y, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x + hw_x, obj.y + hw_y, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x - hw_x, obj.y + hw_y, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+            ]
+            h_top = [
+                self._project_point(obj.x - hw_x, obj.y - hw_y, hh, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x + hw_x, obj.y - hw_y, hh, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x + hw_x, obj.y + hw_y, hh, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+                self._project_point(obj.x - hw_x, obj.y + hw_y, hh, cam_x, cam_y, cam_z, cam_yaw, cam_pitch),
+            ]
+            if all(h_bot) and all(h_top):
+                for i in range(4):
+                    j = (i + 1) % 4
+                    side_poly = np.array([[h_bot[i][0], h_bot[i][1]], [h_bot[j][0], h_bot[j][1]],
+                                          [h_top[j][0], h_top[j][1]], [h_top[i][0], h_top[i][1]]], dtype=np.int32)
+                    shade = 0.80 + 0.20 * (i % 2)
+                    cv2.fillPoly(frame, [side_poly], (int(15 * shade), int(210 * shade), int(245 * shade)))  # Hazard Yellow BGR
+                    # Black Diagonal Caution Band
+                    mid1 = ((h_bot[i][0] + h_top[i][0]) // 2, (h_bot[i][1] + h_top[i][1]) // 2)
+                    mid2 = ((h_bot[j][0] + h_top[j][0]) // 2, (h_bot[j][1] + h_top[j][1]) // 2)
+                    cv2.line(frame, mid1, mid2, (20, 20, 25), max(3, int(6 * scale / 900.0)))
+                    cv2.polylines(frame, [side_poly], True, (10, 160, 200), 1)
+
+                top_poly = np.array([[p[0], p[1]] for p in h_top], dtype=np.int32)
+                cv2.fillPoly(frame, [top_poly], (25, 225, 255))
+                cv2.polylines(frame, [top_poly], True, (10, 170, 210), 1)
+
+        else:
+            # Fallback cylindrical extrusion
+            num_facets = 10
+            facet_pts_b = []
+            facet_pts_t = []
+            for i in range(num_facets):
+                ang = (i / num_facets) * 2.0 * math.pi
+                pb = self._project_point(obj.x + obj.radius * math.cos(ang), obj.y + obj.radius * math.sin(ang), 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                pt = self._project_point(obj.x + obj.radius * math.cos(ang), obj.y + obj.radius * math.sin(ang), obj.height, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                if pb and pt: facet_pts_b.append(pb); facet_pts_t.append(pt)
+
+            if len(facet_pts_b) >= 3 and len(facet_pts_b) == len(facet_pts_t):
+                for i in range(len(facet_pts_b)):
+                    j = (i + 1) % len(facet_pts_b)
+                    poly = np.array([[facet_pts_b[i][0], facet_pts_b[i][1]], [facet_pts_b[j][0], facet_pts_b[j][1]],
+                                     [facet_pts_t[j][0], facet_pts_t[j][1]], [facet_pts_t[i][0], facet_pts_t[i][1]]], dtype=np.int32)
+                    cv2.fillPoly(frame, [poly], obj.bgr_color)
+
+        # 3. Target HUD Reticle (If active chase target)
         if key == target_key:
-            # Floating bracket crosshairs above object
             reticle_y = ty - 18
             cv2.circle(frame, (tx, reticle_y), 12, (0, 229, 255), 2)
             cv2.circle(frame, (tx, reticle_y), 4, (0, 229, 255), -1)
             cv2.line(frame, (tx - 18, reticle_y), (tx + 18, reticle_y), (0, 229, 255), 1)
             cv2.line(frame, (tx, reticle_y - 18), (tx, reticle_y + 18), (0, 229, 255), 1)
 
-            # Target Lock Banner
             tag = f"LOCKED: {obj.name.upper()}"
             cv2.putText(frame, tag, (tx - len(tag) * 4, reticle_y - 14),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 229, 255), 1, cv2.LINE_AA)
-        else:
-            # Standard Floating Object Name Label
-            cv2.putText(frame, obj.name, (tx - len(obj.name) * 3, ty - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (220, 220, 220), 1, cv2.LINE_AA)
 
-    # ── 3D Rover Model Rendering Helper (Headlights, Taillights & 4 Wheels) ──
+    # ── 3D Rover Model Rendering (Military Prototype: Matte Gunmetal & Subtle White LEDs) ──
     def _render_3d_rover(self, frame, rx, ry, ryaw, vl, vr, wheel_l, wheel_r,
                          cam_x, cam_y, cam_z, cam_yaw, cam_pitch):
         r_proj = self._project_point(rx, ry, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
@@ -967,37 +1278,37 @@ class RobotController:
         rcx, rcy, rz = r_proj
         scale = FOCAL_LENGTH / max(0.1, rz)
 
-        # 1. Rover Ground Shadow
-        sw_w = max(18, int(0.38 * scale))
-        sw_h = max(8, int(0.24 * scale))
+        # 1. Realistic Ambient Occlusion Ground Contact Shadow
+        sw_w = max(18, int(0.36 * scale))
+        sw_h = max(8, int(0.22 * scale))
         shadow_overlay = frame.copy()
         cv2.ellipse(shadow_overlay, (rcx, rcy), (sw_w, sw_h),
                     int(-math.degrees(ryaw)), 0, 360, (0, 0, 0), -1)
-        cv2.addWeighted(shadow_overlay, 0.50, frame, 0.50, 0, frame)
+        cv2.addWeighted(shadow_overlay, 0.45, frame, 0.55, 0, frame)
 
-        # 2. Glowing Headlight Beams Projecting Forward onto Floor
-        beam_len = 1.10
-        beam_spread = 0.42
+        # 2. Subtle Forward Headlight Ground Illumination Beam (Crisp Pure White)
+        beam_len = 0.95
+        beam_spread = 0.35
         b_left = self._project_point(rx + beam_len * math.cos(ryaw) - beam_spread * math.sin(ryaw),
-                                    ry + beam_len * math.sin(ryaw) + beam_spread * math.cos(ryaw),
-                                    0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-        b_right = self._project_point(rx + beam_len * math.cos(ryaw) + beam_spread * math.sin(ryaw),
-                                     ry + beam_len * math.sin(ryaw) - beam_spread * math.cos(ryaw),
+                                     ry + beam_len * math.sin(ryaw) + beam_spread * math.cos(ryaw),
                                      0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+        b_right = self._project_point(rx + beam_len * math.cos(ryaw) + beam_spread * math.sin(ryaw),
+                                      ry + beam_len * math.sin(ryaw) - beam_spread * math.cos(ryaw),
+                                      0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
         if b_left and b_right:
             beam_poly = np.array([[rcx, rcy], [b_left[0], b_left[1]], [b_right[0], b_right[1]]], dtype=np.int32)
             beam_layer = frame.copy()
-            cv2.fillPoly(beam_layer, [beam_poly], (255, 240, 180))  # Warm cyan/amber light
-            cv2.addWeighted(beam_layer, 0.16, frame, 0.84, 0, frame)
+            cv2.fillPoly(beam_layer, [beam_poly], (245, 248, 255))  # Crisp white headlight beam
+            cv2.addWeighted(beam_layer, 0.14, frame, 0.86, 0, frame)
 
-        # 3. 3D Chassis Polygon (Octagonal Chamfered Body)
-        bw_2 = 0.16  # half length
-        bh_2 = 0.12  # half width
+        # 3. Sleek Elongated Matte Gunmetal AGV Chassis Hull
+        bw_2 = 0.18  # elongated length
+        bh_2 = 0.085 # sleek narrow width
         chassis_corners_local = [
-            (bw_2, -bh_2 * 0.7, 0.04), (bw_2, bh_2 * 0.7, 0.04),   # Front bumper
-            (bw_2 * 0.7, bh_2, 0.04), (-bw_2 * 0.7, bh_2, 0.04),  # Right side
-            (-bw_2, bh_2 * 0.7, 0.04), (-bw_2, -bh_2 * 0.7, 0.04),# Rear bumper
-            (-bw_2 * 0.7, -bh_2, 0.04), (bw_2 * 0.7, -bh_2, 0.04) # Left side
+            (bw_2, -bh_2 * 0.65, 0.032), (bw_2, bh_2 * 0.65, 0.032),     # Sloped front bumper
+            (bw_2 * 0.70, bh_2, 0.035), (-bw_2 * 0.80, bh_2, 0.035),    # Right side
+            (-bw_2, bh_2 * 0.70, 0.032), (-bw_2, -bh_2 * 0.70, 0.032),  # Rear deflector
+            (-bw_2 * 0.80, -bh_2, 0.035), (bw_2 * 0.70, -bh_2, 0.035)   # Left side
         ]
         chassis_poly_pts = []
         for lx, ly, lz in chassis_corners_local:
@@ -1009,40 +1320,84 @@ class RobotController:
 
         if len(chassis_poly_pts) >= 6:
             c_poly = np.array(chassis_poly_pts, dtype=np.int32)
-            cv2.fillPoly(frame, [c_poly], (42, 48, 56))  # Matte Carbon Charcoal
-            cv2.polylines(frame, [c_poly], True, (0, 229, 255), 2)  # Glowing Cyan Edge
+            cv2.fillPoly(frame, [c_poly], (36, 38, 44))  # Tactical Matte Titanium Hull
+            cv2.polylines(frame, [c_poly], True, (65, 72, 82), 1)  # Milled Bevel Edge
 
-        # 4. Glowing Headlights (Front Left & Front Right Cyan LEDs)
-        for side in (-0.08, 0.08):
+        # 3.2 Sloped Front Armor Nose Wedge
+        nose_local = [
+            (bw_2 * 0.95, -bh_2 * 0.60, 0.020), (bw_2 * 0.95, bh_2 * 0.60, 0.020),
+            (bw_2 * 0.40, bh_2 * 0.70, 0.045), (bw_2 * 0.40, -bh_2 * 0.70, 0.045)
+        ]
+        nose_poly_pts = []
+        for lx, ly, lz in nose_local:
+            wx = rx + lx * math.cos(ryaw) - ly * math.sin(ryaw)
+            wy = ry + lx * math.sin(ryaw) + ly * math.cos(ryaw)
+            pt = self._project_point(wx, wy, lz, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            if pt:
+                nose_poly_pts.append((pt[0], pt[1]))
+        if len(nose_poly_pts) == 4:
+            n_poly = np.array(nose_poly_pts, dtype=np.int32)
+            cv2.fillPoly(frame, [n_poly], (45, 48, 54))  # 30° Sloped Armor Glacis Plate
+            cv2.polylines(frame, [n_poly], True, (75, 82, 92), 1)
+
+        # 3.5 Tactical Military Run-Flat Wheels (Matte Black Lug Treads & Tungsten Hubs)
+        for side in (-bh_2 * 1.15, bh_2 * 1.15):
+            for fx in (-bw_2 * 0.55, bw_2 * 0.45):
+                wx = rx + fx * math.cos(ryaw) - side * math.sin(ryaw)
+                wy = ry + fx * math.sin(ryaw) + side * math.cos(ryaw)
+                wpt = self._project_point(wx, wy, 0.028, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                if wpt:
+                    tire_w = max(4, int(0.025 * scale))
+                    tire_h = max(6, int(0.040 * scale))
+                    cv2.rectangle(frame, (wpt[0] - tire_w, wpt[1] - tire_h),
+                                  (wpt[0] + tire_w, wpt[1] + tire_h), (18, 18, 20), -1)
+                    cv2.rectangle(frame, (wpt[0] - tire_w, wpt[1] - tire_h),
+                                  (wpt[0] + tire_w, wpt[1] + tire_h), (40, 42, 46), 1)
+                    cv2.rectangle(frame, (wpt[0] - max(1, tire_w // 2), wpt[1] - max(1, tire_h // 3)),
+                                  (wpt[0] + max(1, tire_w // 2), wpt[1] + max(1, tire_h // 3)), (75, 80, 88), -1)
+
+        # 4. Subtle White LED Headlights (Twin Flush Micro-Projectors — Pure White, Zero Cartoon Circles)
+        for side in (-0.055, 0.055):
             hl_wx = rx + bw_2 * math.cos(ryaw) - side * math.sin(ryaw)
             hl_wy = ry + bw_2 * math.sin(ryaw) + side * math.cos(ryaw)
-            hl_pt = self._project_point(hl_wx, hl_wy, 0.08, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            hl_pt = self._project_point(hl_wx, hl_wy, 0.025, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
             if hl_pt:
-                cv2.circle(frame, (hl_pt[0], hl_pt[1]), max(4, int(0.03 * scale)), (0, 240, 255), -1)
-                cv2.circle(frame, (hl_pt[0], hl_pt[1]), max(6, int(0.05 * scale)), (0, 200, 255), 1)
+                pw = max(2, int(0.014 * scale))
+                ph = max(1, int(0.008 * scale))
+                cv2.rectangle(frame, (hl_pt[0] - pw, hl_pt[1] - ph),
+                              (hl_pt[0] + pw, hl_pt[1] + ph), (255, 255, 255), -1)
 
-        # 5. Glowing Taillights (Rear Left & Rear Right Crimson LEDs)
-        for side in (-0.08, 0.08):
-            tl_wx = rx - bw_2 * math.cos(ryaw) - side * math.sin(ryaw)
-            tl_wy = ry - bw_2 * math.sin(ryaw) + side * math.cos(ryaw)
-            tl_pt = self._project_point(tl_wx, tl_wy, 0.08, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            if tl_pt:
-                cv2.circle(frame, (tl_pt[0], tl_pt[1]), max(3, int(0.025 * scale)), (30, 30, 245), -1)
-                cv2.circle(frame, (tl_pt[0], tl_pt[1]), max(5, int(0.045 * scale)), (0, 0, 255), 1)
+        # 5. Rear Subtle Crimson Marker Light (Thin Recessed Strip)
+        tl_wx = rx - bw_2 * math.cos(ryaw)
+        tl_wy = ry - bw_2 * math.sin(ryaw)
+        tl_pt = self._project_point(tl_wx, tl_wy, 0.035, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+        if tl_pt:
+            tw = max(4, int(0.032 * scale))
+            th = max(1, int(0.006 * scale))
+            cv2.rectangle(frame, (tl_pt[0] - tw, tl_pt[1] - th),
+                          (tl_pt[0] + tw, tl_pt[1] + th), (25, 25, 185), -1)
 
-        # 6. Roof LiDAR Puck (Mounted at center)
-        lidar_pt = self._project_point(rx, ry, 0.16, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+        # 6. Centered, Distinct Black LiDAR Puck (Centered on Top Deck — Zero Offset, Zero Cartoon Colors)
+        lidar_pt = self._project_point(rx, ry, 0.065, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
         if lidar_pt:
-            lr_px = max(4, int(0.04 * scale))
-            cv2.circle(frame, (lidar_pt[0], lidar_pt[1]), lr_px, (25, 25, 30), -1)
-            cv2.circle(frame, (lidar_pt[0], lidar_pt[1]), lr_px, (0, 229, 255), 2)
-            cv2.circle(frame, (lidar_pt[0], lidar_pt[1]), 2, (0, 255, 255), -1)
+            lp_w = max(4, int(0.028 * scale))
+            lp_h = max(2, int(0.018 * scale))
+            # Distinct cylindrical black puck
+            cv2.rectangle(frame, (lidar_pt[0] - lp_w, lidar_pt[1] - lp_h),
+                          (lidar_pt[0] + lp_w, lidar_pt[1] + lp_h), (16, 16, 18), -1)
+            cv2.rectangle(frame, (lidar_pt[0] - lp_w, lidar_pt[1] - lp_h),
+                          (lidar_pt[0] + lp_w, lidar_pt[1] + lp_h), (35, 38, 42), 1)
+            # Optical horizontal mirror band
+            cv2.line(frame, (lidar_pt[0] - lp_w + 1, lidar_pt[1]),
+                     (lidar_pt[0] + lp_w - 1, lidar_pt[1]), (48, 52, 58), 1)
 
     # ── Telemetry API Payload ──
     def get_telemetry(self) -> Dict[str, Any]:
         with self.state.lock:
             # Enriched hardware & model status for HUD
-            enriched_badge = f"{self.state.neural_badge} | YOLO: {self.perception.yolo_source} | CLIP: {self.perception.cache_source}"
+            y_src = self.perception.yolo_source if self.perception else "OFFLINE"
+            c_src = self.perception.cache_source if self.perception else "OFFLINE"
+            enriched_badge = f"{self.state.neural_badge} | YOLO: {y_src} | CLIP: {c_src}"
             return {
                 "x": round(self.state.x, 2),
                 "y": round(self.state.y, 2),

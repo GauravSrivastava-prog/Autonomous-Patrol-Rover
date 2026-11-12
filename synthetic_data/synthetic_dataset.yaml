@@ -1,0 +1,13 @@
+# Auto-generated Real-to-Sim synthetic dataset (Realistic 3D Assets)
+# Generated: 2026-11-12T04:29:27.951532
+path: /Users/gauravsrivastava1212/Documents/My Computer/SEM-7/Algorithm and Robotics Lab/synthetic_data
+train: images
+val: images
+
+nc: 5
+names:
+  0: "chair"
+  1: "traffic cone"
+  2: "potted plant"
+  3: "wooden crate"
+  4: "hazard box"
