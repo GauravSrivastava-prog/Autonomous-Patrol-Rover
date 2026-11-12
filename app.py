@@ -1217,6 +1217,9 @@ def get_hud_telemetry_image():
 docs_dir = os.path.join(os.path.dirname(__file__), "docs")
 if os.path.exists(docs_dir):
     api.mount("/docs", StaticFiles(directory=docs_dir), name="docs")
+    media_dir = os.path.join(docs_dir, "media")
+    if os.path.exists(media_dir):
+        api.mount("/media", StaticFiles(directory=media_dir), name="media")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. Homebrew-Style CLI Boot Sequence & 1-Command Evaluator Launcher

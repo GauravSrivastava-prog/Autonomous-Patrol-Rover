@@ -578,7 +578,7 @@ class RobotController:
 
     def set_view_mode(self, v: str):
         v = v.upper()
-        if v in ("TPP", "FPP"):
+        if v in ("TPP", "FPP", "TOP", "TOPDOWN"):
             with self.state.lock:
                 self.state.view_mode = v
 
@@ -804,6 +804,14 @@ class RobotController:
             cam_yaw = ryaw
             cam_pitch = math.radians(-20.0)  # -0.349 rad downward tilt
             horizon_y = int(CAMERA_H / 2.0 + math.tan(cam_pitch) * FOCAL_LENGTH * 0.40)
+        elif view_mode in ("TOP", "TOPDOWN"):
+            # High-angle tactical overhead surveillance view
+            cam_x = rx - 0.40 * math.cos(ryaw)
+            cam_y = ry - 0.40 * math.sin(ryaw)
+            cam_z = 2.40
+            cam_yaw = ryaw
+            cam_pitch = math.radians(-62.0)
+            horizon_y = -40
         else:
             # 1st-Person Bumper View ("FPP")
             cam_x = rx + 0.16 * math.cos(ryaw)
@@ -937,8 +945,8 @@ class RobotController:
                     "base_proj": proj
                 })
 
-        # Enqueue Rover Chassis (Only in TPP view)
-        if view_mode == "TPP":
+        # Enqueue Rover Chassis (Only in TPP and TOP views)
+        if view_mode in ("TPP", "TOP", "TOPDOWN"):
             r_proj = self._project_point(rx, ry, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
             if r_proj:
                 render_queue.append({
