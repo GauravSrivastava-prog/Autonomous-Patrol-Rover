@@ -1213,6 +1213,13 @@ def get_hud_telemetry_image():
         return FileResponse(png_path, media_type="image/png")
     return JSONResponse({"error": "Image not found"}, status_code=404)
 
+@api.get("/laserflow-reveal.png")
+def get_laserflow_reveal_image():
+    reveal_path = os.path.join(os.path.dirname(__file__), "docs", "laserflow-reveal.png")
+    if os.path.exists(reveal_path):
+        return FileResponse(reveal_path, media_type="image/png")
+    return JSONResponse({"error": "Reveal image not found"}, status_code=404)
+
 # Mount docs directory for static assets
 docs_dir = os.path.join(os.path.dirname(__file__), "docs")
 if os.path.exists(docs_dir):
