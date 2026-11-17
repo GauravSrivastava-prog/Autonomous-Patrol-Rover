@@ -27,3 +27,5 @@ ml_pipeline/datasets/
 ml_pipeline/runs/
 models/
 
+.vercel
+.env*
