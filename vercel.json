@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "echo 'Skipping Python build: serving static docs directory'",
+  "outputDirectory": "docs",
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/landing",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/((?!.*\\..*).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+
