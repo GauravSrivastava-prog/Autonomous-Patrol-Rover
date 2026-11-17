@@ -35,20 +35,128 @@
 
     /* Inlined LaserFlow CSS from ReactBits */
     .laser-flow-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
+      position: relative;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
 
-.laser-flow-canvas {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-}
+    .laser-flow-canvas {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
 
+    /* ── LaserHero Stage & Terminal Card Styling (Ground Truth Spec) ── */
+    .laser-hero {
+      --lh-stage: #110e14;
+      --lh-card: #0d0d0d;
+      --lh-card-side: #17141c;
+      --lh-row-active: #2a2731;
+      --lh-line: rgba(255, 255, 255, 0.06);
+      --lh-muted: #8b8794;
+      --lh-text: #ecebf1;
+      --lh-beam: 60%;
+      position: relative;
+      width: 100%;
+      max-width: 824px;
+      aspect-ratio: 824 / 500;
+      overflow: hidden;
+      border-radius: 20px;
+      border: 1px solid var(--lh-line);
+      background: var(--lh-stage);
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.85);
+      margin: 0 auto;
+    }
+
+    .laser-hero__layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .laser-hero__card {
+      position: absolute;
+      left: 3.6%;
+      right: 24.4%;
+      top: 55.8%;
+      bottom: -24px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--lh-card);
+      color: var(--lh-text);
+      overflow: hidden;
+      font-family: var(--font-mono);
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.95);
+      pointer-events: auto;
+    }
+
+    .laser-hero__replay {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 3;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      color: var(--lh-muted);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--lh-line);
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .laser-hero__replay:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .laser-hero__replay:focus-visible {
+      outline: 2px solid #3847ff;
+      outline-offset: 2px;
+    }
+
+    .laser-hero__fallback {
+      position: absolute;
+      inset: 0 0 44.2% 0;
+      background:
+        linear-gradient(90deg, transparent calc(var(--lh-beam) - 4px), #fff var(--lh-beam), transparent calc(var(--lh-beam) + 4px)),
+        radial-gradient(ellipse 45% 100% at var(--lh-beam) 100%, rgba(56, 71, 255, 0.55), transparent 70%);
+    }
+
+    @media (max-width: 1023px) {
+      .laser-hero {
+        --lh-beam: 50%;
+        aspect-ratio: 4 / 3;
+      }
+      .laser-hero__card {
+        left: 6%;
+        right: 6%;
+        top: 52%;
+      }
+    }
+
+    @media (max-width: 639px) {
+      .laser-hero {
+        aspect-ratio: auto;
+        height: 560px;
+      }
+      .laser-hero__card {
+        left: 5%;
+        right: 5%;
+        top: 50%;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .laser-hero__replay {
+        display: none;
+      }
+    }
 
     /* Subtle CRT Scanline Vignette */
     body::before {
@@ -76,14 +184,11 @@
 
   <!-- React Babel Script -->
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Inlined LaserFlow Component (from https://reactbits.dev/r/LaserFlow-JS-CSS.json)
     // ─────────────────────────────────────────────────────────────────────────────
-    
-
-const { useState, useEffect, useRef } = React;
 
 
 
@@ -1059,49 +1164,203 @@ const LaserFlow = ({
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Main ManifestoApp Component (Progressive Stages & Laser Tracking)
+    
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Responsive Media Query Hook: useMedia
+    // ─────────────────────────────────────────────────────────────────────────────
+    function useMedia(query) {
+      const [match, setMatch] = useState(() => {
+        if (typeof window !== "undefined" && window.matchMedia) {
+          return window.matchMedia(query).matches;
+        }
+        return false;
+      });
+
+      useEffect(() => {
+        if (typeof window === "undefined" || !window.matchMedia) return;
+        const mq = window.matchMedia(query);
+        const on = () => setMatch(mq.matches);
+        on();
+        mq.addEventListener("change", on);
+        return () => mq.removeEventListener("change", on);
+      }, [query]);
+
+      return match;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // TerminalCard Component (macOS Window with Autonomous Rover Logs)
+    // ─────────────────────────────────────────────────────────────────────────────
+    function TerminalCard() {
+      return (
+        <div className="terminal-card flex flex-col h-full bg-[#0d0d0d] text-left select-none">
+          {/* macOS Title Bar (36px) */}
+          <header className="h-9 px-3.5 flex items-center justify-between border-b border-white/[0.06] bg-[#141218]/90">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f56]/90 border border-[#e0443e]/50 inline-block shadow-sm" />
+              <span className="w-2.5 h-2.5 rounded-full bg-[#ffbd2e]/90 border border-[#dea123]/50 inline-block shadow-sm" />
+              <span className="w-2.5 h-2.5 rounded-full bg-[#27c93f]/90 border border-[#1aab29]/50 inline-block shadow-sm" />
+            </div>
+            <div className="text-[11.5px] sm:text-xs font-mono text-[#8b8794] tracking-tight font-medium">
+              gauravsrivastava1212 --zsh - 175x40
+            </div>
+            <div className="w-16 text-right">
+              <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#22c55e]/10 text-[#22c55e] border border-[#22c55e]/20">
+                MPS 60FPS
+              </span>
+            </div>
+          </header>
+
+          {/* Autonomous Rover Telemetry & Boot Log Stream */}
+          <div className="p-3 sm:p-3.5 text-[10.5px] sm:text-[11.5px] font-mono leading-relaxed space-y-1 overflow-hidden text-slate-300">
+            <div className="flex items-center gap-2 text-slate-200">
+              <span className="text-[#22c55e] font-semibold">gaurav@edge-station</span>
+              <span className="text-slate-500">:</span>
+              <span className="text-[#38bdf8]">~</span>
+              <span className="text-slate-400">$</span>
+              <span className="text-white font-medium">./run_demo.sh --webots --hardware mps</span>
+            </div>
+            <div className="text-slate-400">
+              <span className="text-[#38bdf8]">[INIT]</span> Apple Silicon M-Series Metal Performance Shaders (MPS) active
+            </div>
+            <div className="text-slate-400">
+              <span className="text-[#38bdf8]">[INIT]</span> Loading YOLOv8n detector weights (<span className="text-amber-300">yolov8n.pt</span>)... <span className="text-[#22c55e]">[OK] (3.2ms)</span>
+            </div>
+            <div className="text-slate-400">
+              <span className="text-[#38bdf8]">[INIT]</span> Loading OpenAI CLIP ViT-B/32 backbone... <span className="text-[#22c55e]">[OK] (12.4ms)</span>
+            </div>
+            <div className="text-slate-400">
+              <span className="text-[#a855f7]">[IPC]</span> Webots R2025a IPC supervisor connected on <span className="text-cyan-300">127.0.0.1:1234</span>
+            </div>
+            <div className="text-slate-400">
+              <span className="text-amber-400">[SENSOR]</span> LiDAR: RPLIDAR A2 active (360° scan @ 10Hz, 360 ranges)
+            </div>
+            <div className="text-slate-400">
+              <span className="text-amber-400">[SENSOR]</span> RGB Camera: 1280x720 active @ 60 FPS
+            </div>
+            <div className="text-slate-300">
+              <span className="text-[#ec4899]">[VLM]</span> Goal: <span className="text-emerald-300">&quot;locate red fire extinguisher and approach within 0.8m&quot;</span>
+            </div>
+            <div className="text-slate-300">
+              <span className="text-[#eab308]">[INFER]</span> YOLO: 3 objects [cone: 0.94, crate: 0.88, extinguisher: 0.92]
+            </div>
+            <div className="text-slate-300">
+              <span className="text-[#3847ff] font-semibold">[CONTROL]</span> Pure pursuit trajectory: <span className="text-cyan-200">v=0.65m/s, w=-0.12rad/s</span>
+            </div>
+            <div className="text-[#22c55e] font-semibold">
+              <span>[STATUS]</span> System deterministic cycle: 14.8ms | Zero dropped frames
+            </div>
+            <div className="pt-1 flex items-center gap-1.5 text-white font-semibold">
+              <span className="text-[#3847ff] font-bold">[PATROL-ROVER]</span>
+              <span className="text-slate-400">&gt;</span>
+              <span className="inline-block w-2.5 h-3.5 bg-[#3847ff] animate-pulse align-middle" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Reusable LaserHero Master Section (Stage, LaserDrop Intro & Replay)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const LaserHero = React.memo(function LaserHero({ children }) {
+      const cardRef = useRef(null);
+      const [run, setRun] = useState(0);
+      const [webgl2, setWebgl2] = useState(true);
+      const narrow = useMedia("(max-width: 1023px)");
+      const phone = useMedia("(max-width: 639px)");
+      const coarse = useMedia("(pointer: coarse)");
+      const reduced = useMedia("(prefers-reduced-motion: reduce)");
+
+      const replay = useCallback(() => {
+        setRun((n) => n + 1);
+      }, []);
+
+      useEffect(() => {
+        try {
+          const c = document.createElement("canvas");
+          const hasWebGL2 = !!(c.getContext("webgl2") || c.getContext("experimental-webgl2"));
+          setWebgl2(hasWebGL2);
+        } catch (e) {
+          setWebgl2(false);
+        }
+      }, []);
+
+      return (
+        <section className="laser-hero" aria-label="Autonomous Patrol Rover Hero">
+          <div className="laser-hero__layer">
+            {webgl2 ? (
+              <LaserFlow
+                key={run}
+                surfaceRef={cardRef}
+                beamPosition={narrow ? 0.5 : 0.6}
+                color="#3847ff"
+                intensity={1.8}
+                beamWidth={1.5}
+                flare={1.5}
+                spread={1.5}
+                spill={1.0}
+                fog={phone ? 0.15 : 0.2}
+                dust={1.6}
+                streaks={1.5}
+                dots={1.0}
+                pulse={1.5}
+                speed={1.5}
+                seed={3}
+                mouseInteraction={!coarse}
+                revealImage="./laserflow-reveal.png"
+                revealRadius={220}
+                revealOpacity={0.6}
+                intro={true}
+                theme="dark"
+                dpr={phone ? 1.5 : undefined}
+              />
+            ) : (
+              <div className="laser-hero__fallback" aria-hidden="true" />
+            )}
+          </div>
+
+          <div ref={cardRef} className="laser-hero__card">
+            {children ?? <TerminalCard />}
+          </div>
+
+          {webgl2 && !reduced && (
+            <button
+              type="button"
+              className="laser-hero__replay"
+              onClick={replay}
+              aria-label="Replay animation"
+              title="Replay Laser Intro"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+                <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+                <path d="M16 21h5v-5"/>
+              </svg>
+            </button>
+          )}
+        </section>
+      );
+    });
+
+// Main ManifestoApp Component (Progressive Stages & Laser Tracking)
     // ─────────────────────────────────────────────────────────────────────────────
     function ManifestoApp() {
       const mainMacRef = useRef(null);
       const [stage, setStage] = useState(0);
       const [userChoices, setUserChoices] = useState({});
 
-      // ── LaserFlow Tracking: Pointermove with LERP Smoothing ──
-      const [beamPosition, setBeamPosition] = useState(0.5);
-      const targetBeamX = useRef(0.5);
-      const currentBeamX = useRef(0.5);
-
-      useEffect(() => {
-        const onPointerMove = (e) => {
-          targetBeamX.current = Math.max(0.05, Math.min(0.95, e.clientX / window.innerWidth));
-        };
-        window.addEventListener('pointermove', onPointerMove, { passive: true });
-
-        let rafId;
-        const updateBeam = () => {
-          // lerp smoothing factor: 0.08
-          currentBeamX.current += (targetBeamX.current - currentBeamX.current) * 0.08;
-          setBeamPosition(currentBeamX.current);
-          rafId = requestAnimationFrame(updateBeam);
-        };
-        rafId = requestAnimationFrame(updateBeam);
-
-        return () => {
-          window.removeEventListener('pointermove', onPointerMove);
-          cancelAnimationFrame(rafId);
-        };
-      }, []);
-
       // ── Global Keyboard Y/N Listener ──
       useEffect(() => {
         const handleKeyDown = (e) => {
           const key = e.key.toUpperCase();
-          if (key === 'Y' || key === 'N') {
+          if (key === "Y" || key === "N") {
             advanceStage(key);
           }
         };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
       }, [stage]);
 
       const advanceStage = (choice) => {
@@ -1111,7 +1370,7 @@ const LaserFlow = ({
 
         setTimeout(() => {
           if (mainMacRef.current) {
-            mainMacRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            mainMacRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
           }
         }, 140);
       };
@@ -1119,28 +1378,27 @@ const LaserFlow = ({
       return (
         <div className="min-h-screen bg-[#0b0b0e] text-slate-200 px-4 sm:px-8 py-10 flex flex-col items-center justify-start relative text-left">
           
-          {/* Full-viewport Fixed LaserFlow Background */}
-          <LaserFlow
-            surfaceRef={mainMacRef}
-            beamPosition={beamPosition}
-            mouseInteraction={true}
-            color="#00e5ff"
-            intensity={1.8}
-            beamWidth={1.6}
-            flare={1.6}
-            spread={1.5}
-            spill={1.2}
-            fog={0.25}
-            dust={1.8}
-            speed={1.4}
-            className="fixed inset-0 w-full h-full pointer-events-none z-0"
-            style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 0, pointerEvents: 'none' }}
-          />
-
           {/* Main Content Layout Container */}
-          <div className="w-full max-w-4xl z-10 relative">
+          <div className="w-full max-w-4xl z-10 relative flex flex-col gap-10">
 
-            {/* Main macOS Window (Target of LaserFlow surfaceRef) */}
+            {/* ── TOP HERO SECTION: LASERHERO SHOWCASE ── */}
+            <div className="flex flex-col items-center text-center">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-[#3847ff] text-xs font-mono font-bold tracking-widest uppercase mb-4 shadow-[0_0_15px_rgba(56,71,255,0.2)]">
+                <span className="w-2 h-2 rounded-full bg-[#3847ff] animate-ping inline-block" />
+                UPES AUTONOMOUS PATROL ROVER
+              </div>
+              <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight uppercase mb-2 font-mono">
+                Bare-Metal Edge Perception Engine
+              </h1>
+              <p className="text-slate-400 text-sm sm:text-base max-w-2xl mx-auto mb-8 font-sans">
+                Autonomous mobile robot architecture featuring zero-latency MPS neural acceleration, pure pursuit trajectory control, and deterministic physics execution.
+              </p>
+
+              {/* LaserHero Component Stage */}
+              <LaserHero />
+            </div>
+
+            {/* ── INTERACTIVE MANIFESTO TERMINAL ── */}
             <div ref={mainMacRef} className="rounded-xl shadow-2xl">
               <MacWindow
                 title="bash - autonomous-patrol-rover - 80x24"
