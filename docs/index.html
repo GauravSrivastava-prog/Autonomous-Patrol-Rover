@@ -3,13 +3,25 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AUTONOMOUS PATROL ROVER // Bare-Metal Edge Perception Engine</title>
+  <title>Autonomous Patrol Rover</title>
 
-  <!-- Pinned CDN Dependencies -->
+  <!-- Clean Sans-Serif (Inter) & Code Monospace (JetBrains Mono) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com/3.4.1"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          }
+        }
+      }
+    };
+  </script>
 
   <!-- React 18, ReactDOM & Babel Standalone CDNs -->
   <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
@@ -31,6 +43,7 @@
       min-height: 100vh;
       line-height: 1.6;
       overflow-x: hidden;
+      letter-spacing: -0.011em;
     }
 
     /* Inlined LaserFlow CSS from ReactBits */
@@ -240,7 +253,19 @@ void main() {
   float sr = uSurface.z / uScale;
   float sb = uSurface.w / uScale;
   float radius = uRadius / uScale;
-  float dx = p.x - bx;
+
+  // ── Phase 3: Organic Tree-Branch Wandering & Tendril Pathing ──
+  float wanderFreq1 = p.y * 0.016 + t * 0.7;
+  float wanderFreq2 = p.y * 0.041 - t * 1.1;
+  float wanderFreq3 = p.y * 0.085 + t * 1.8;
+  float wanderNoise = noise(vec2(p.y * 0.028, t * 0.45)) - 0.5;
+  float treeBranch = sin(wanderFreq1) * 7.5 + sin(wanderFreq2) * 4.2 + sin(wanderFreq3) * 2.0 + wanderNoise * 8.5;
+
+  // Smoothly blend wandering back to dead center right before landing on the surface
+  float wanderBlend = smoothstep(0.0, 75.0, sy - p.y);
+  float organicBx = bx + treeBranch * wanderBlend;
+
+  float dx = p.x - organicBx;
   float adx = abs(dx);
   float h = sy - p.y;
   float hp = max(h, 0.0);
@@ -283,6 +308,14 @@ void main() {
   float head = exp(-sq((p.y - front) / 24.0)) * falling;
   col += mix(WHITE, BEAM, 0.35) * head * (7.0 * exp(-adx / (2.6 * beamWidth)) + 1.0 * exp(-adx / (14.0 * beamWidth)));
 
+  // Secondary organic branch tendril splitting off the main trunk
+  float branchPhase = p.y * 0.022 + t * 0.55;
+  float branchSide = sin(branchPhase) > 0.0 ? 1.0 : -1.0;
+  float branchDist = 22.0 * smoothstep(40.0, 260.0, p.y) * wanderBlend;
+  float branchDx = p.x - (bx + (treeBranch + branchSide * branchDist) * wanderBlend);
+  float branchTendril = 5.2 * exp(-abs(branchDx) / (1.2 * beamWidth)) * smoothstep(0.28, 0.85, noise(vec2(p.y * 0.045, t * 0.65)));
+  col += mix(CYAN, WHITE, 0.5) * branchTendril * top * above * drop * 0.75;
+
   float psi = adx * (outline + 1.0);
   float rise = max(hp - 17.9 * flare, 0.0);
   float skirtAmp = 16.6 * (exp(-sq(rise / (11.8 * flare))) + 0.3 * exp(-rise / (60.0 * flare)));
@@ -322,14 +355,15 @@ void main() {
   float edgeLine = (exp(-sq(max(sd, 0.0) / 0.9)) + 0.12 * exp(-max(sd, 0.0) / 3.0)) * edgeGlow * onTop;
   col += mix(sideK, WHITE, 0.6) * edgeLine * min(bloom, 1.0);
 
-  float pour = uShape.w;
-  float baseline = exp(-sq(130.0 / 150.0));
-  float strengthR = exp(-sq(reachR / (150.0 * uShape.z))) * (1.0 - smoothstep(0.8 * spread, 1.25 * spread, reachR)) / baseline * pour;
-  float strengthL = exp(-sq(reachL / (150.0 * uShape.z))) * (1.0 - smoothstep(0.8 * spread, 1.25 * spread, reachL)) / baseline * pour;
+  // ── Phase 3: Symmetric Encircling Spill & Waterfall Math ──
+  float pour = max(uShape.w, 1.2);
+  float spanHalf = max(sr - sl, 200.0) * 0.5;
+  float strengthR = clamp(1.3 * exp(-sq(max(reachR - spanHalf * 0.72, 0.0) / (175.0 * uShape.z))), 0.45, 1.85) * pour;
+  float strengthL = clamp(1.3 * exp(-sq(max(reachL - spanHalf * 0.72, 0.0) / (175.0 * uShape.z))), 0.45, 1.85) * pour;
   float fallY = p.y - sy - 0.3 * radius;
   float rightHalf = smoothstep(center.x - 4.0, center.x + 4.0, p.x);
-  float haloR = exp(-length(p - vec2(sr - 0.3 * radius, sy + 0.3 * radius)) / 40.0) * sqrt(strengthR);
-  float haloL = exp(-length(p - vec2(sl + 0.3 * radius, sy + 0.3 * radius)) / 40.0) * sqrt(strengthL);
+  float haloR = exp(-length(p - vec2(sr - 0.3 * radius, sy + 0.3 * radius)) / 42.0) * sqrt(strengthR);
+  float haloL = exp(-length(p - vec2(sl + 0.3 * radius, sy + 0.3 * radius)) / 42.0) * sqrt(strengthL);
   vec3 glowR;
   vec3 glowL;
   col += spill(sd, fallY, strengthR, uPour.y, t, glowR) * rightHalf;
@@ -337,9 +371,13 @@ void main() {
   col += easeLight(glowR * rightHalf + NAVY * 0.9 * haloR, uPour.w);
   col += easeLight(glowL * (1.0 - rightHalf) + NAVY * 0.9 * haloL, uPour.z);
 
+  // ── Phase 4: Global Mouse Hover / Lens Effect Decoupled from Beam Mask ──
   vec2 toLens = frag - uLens.xy;
   float lens = exp(-dot(toLens, toLens) / sq(uLens.z)) * uLens.w;
   col *= 1.0 + 0.35 * lens * hug;
+  // Ambient global lens illumination visible anywhere on viewport
+  col += mix(BEAM, CYAN, 0.4) * lens * 0.35;
+
   float fogAmount = uAmount.y * uAtmosphere;
   float near = exp(-adx / 150.0);
   float envelope = near * (0.3 + 0.4 * exp(-hp / 50.0) + 1.2 * exp(-p.y / 120.0));
@@ -359,6 +397,7 @@ void main() {
     col += fog * fogAmount * (1.0 + 1.2 * lens) * mix(1.0, 0.45, uTheme);
   }
 
+  // Decoupled Background Reveal (Visible Anywhere Cursor Moves)
   if (uRevealInfo.y > 0.001 && uLens.w > 0.002) {
     vec2 toReveal = frag - uLens.xy;
     float reveal = exp(-dot(toReveal, toReveal) / sq(uRevealInfo.x)) * uLens.w;
@@ -366,14 +405,16 @@ void main() {
     float onImage = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
     vec4 ui = texture(uReveal, uv);
     float ink = max(ui.r, max(ui.g, ui.b)) * onImage;
-    float lit = clamp(col.b * 0.9, 0.0, 1.0) * (1.0 - smoothstep(0.9, 2.2, col.b));
-    float clearance = smoothstep(60.0 * sqrt(beamWidth), 150.0 * sqrt(beamWidth), adx);
-    col += mix(BEAM, WHITE, 0.4) * ink * reveal * lit * clearance * uRevealInfo.y * 2.2;
+    // Decoupled from beam light mask: lens provides its own ambient illumination everywhere on the screen
+    float lensAmbient = 0.9 + clamp(col.b * 0.7, 0.0, 1.2);
+    col += mix(BEAM, WHITE, 0.45) * ink * reveal * lensAmbient * uRevealInfo.y * 2.8;
   }
 
   float haze = col.b;
   float dotGrid = 1.0 - smoothstep(0.16, 0.32, length(fract(frag / 3.0) - 0.5));
-  col += BEAM * dotGrid * clamp(haze, 0.0, 1.5) * (1.0 - smoothstep(1.5, 4.0, haze)) * (0.18 + 0.3 * lens) * uExtra.y;
+  float gridPresence = clamp(haze + 0.65 * lens, 0.0, 1.5) * (1.0 - smoothstep(1.5, 4.0, haze));
+  col += BEAM * dotGrid * gridPresence * (0.18 + 0.5 * lens) * uExtra.y;
+
   if (lens > 0.002) {
     vec2 drift = frag - vec2(0.0, t * 14.0);
     vec2 sparkCell = floor(drift / 7.0);
@@ -381,7 +422,8 @@ void main() {
     float sparkDist = length(drift - sparkPos);
     float sparkOn = step(0.8, hash(sparkCell + 8.8));
     float sparkTwinkle = 0.5 + 0.5 * sin(t * 5.0 + hash(sparkCell + 3.7) * 6.283);
-    col += WHITE * exp(-sparkDist * sparkDist / 0.35) * sparkOn * sparkTwinkle * lens * clamp(haze * 1.5, 0.0, 1.0) * 1.6 * uAmount.z;
+    float sparkHaze = max(clamp(haze * 1.5, 0.0, 1.0), 0.75);
+    col += WHITE * exp(-sparkDist * sparkDist / 0.35) * sparkOn * sparkTwinkle * lens * sparkHaze * 1.6 * uAmount.z;
   }
 
   float dustAmount = uAmount.z;
@@ -1237,6 +1279,37 @@ const LaserFlow = ({
     // ─────────────────────────────────────────────────────────────────────────────
     // Full-Viewport BeamBackground Component (Fixed Behind All Content)
     // ─────────────────────────────────────────────────────────────────────────────
+        // ─────────────────────────────────────────────────────────────────────────────
+    // MediaBreakout Component (Cinematic Out-of-Terminal High-Resolution Display)
+    // ─────────────────────────────────────────────────────────────────────────────
+    function MediaBreakout({ title, caption, badge, children, className = "" }) {
+      return (
+        <div className={`w-full rounded-2xl border border-white/10 bg-[#121215]/95 backdrop-blur-xl shadow-2xl overflow-hidden transition-all duration-300 ${className}`}>
+          {/* Subtle Clean Header */}
+          {title && (
+            <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between text-xs font-sans text-slate-200 font-semibold tracking-wide">
+              <span>{title}</span>
+              {badge && (
+                <span className="text-[11px] font-mono text-slate-400 font-normal px-2 py-0.5 rounded bg-white/5 border border-white/5">
+                  {badge}
+                </span>
+              )}
+            </div>
+          )}
+          {/* Media Body */}
+          <div className="p-3 sm:p-5">
+            {children}
+          </div>
+          {/* Clean Human Caption */}
+          {caption && (
+            <div className="px-5 py-3 border-t border-white/[0.06] bg-black/25 text-xs sm:text-sm text-slate-400 font-sans leading-relaxed">
+              {caption}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     const BeamBackground = React.memo(function BeamBackground({
       proxyRef,
       run,
@@ -1252,7 +1325,7 @@ const LaserFlow = ({
             <LaserFlow
               key={run}
               surfaceRef={proxyRef}
-              beamPosition={beamPosition}
+              beamPosition={0.5}
               color="#3847ff"
               intensity={1.8}
               beamWidth={1.5}
@@ -1302,16 +1375,15 @@ const LaserFlow = ({
       const [webgl2, setWebgl2] = useState(true);
 
       const proxyRef = useRef(null);
-      const cardRef0 = useRef(null); // Hero Terminal Card
-      const cardRef1 = useRef(null); // Stage 1 Section
-      const cardRef2 = useRef(null); // Stage 2 Section
-      const cardRef3 = useRef(null); // Stage 3 Section
-      const cardRef4 = useRef(null); // Stage 4 Section
-      const cardRef5 = useRef(null); // Stage 5 GitHub Hub
+      const cardRef0 = useRef(null); // Hero Section
+      const cardRef1 = useRef(null); // Stage 1 (YOLO Media Breakout + Terminal)
+      const cardRef2 = useRef(null); // Stage 2 (CLIP Media Breakout + Terminal)
+      const cardRef3 = useRef(null); // Stage 3 (Simulation Media Breakout + Terminal)
+      const cardRef4 = useRef(null); // Stage 4 (Runbook Terminal)
+      const cardRef5 = useRef(null); // Stage 5 (GitHub Launch Hub)
 
       const glidingUntilRef = useRef(0);
 
-      const narrow = useMedia("(max-width: 1023px)");
       const phone = useMedia("(max-width: 639px)");
       const coarse = useMedia("(pointer: coarse)");
       const reduced = useMedia("(prefers-reduced-motion: reduce)");
@@ -1331,6 +1403,7 @@ const LaserFlow = ({
       }, []);
 
       // ── Tracking Proxy Engine Loop (rAF Interpolator) ──
+      // Phase 3: Lazy, smooth, much slower vertical extension (3.0s duration, 0.035 lerp)
       useEffect(() => {
         let rafId;
         let currentTop = null;
@@ -1359,8 +1432,8 @@ const LaserFlow = ({
               currentHeight = rect.height;
               currentRadius = radius;
             } else {
-              // Smooth lerp: 0.08 while gliding between cards, 0.45 while tracking user scroll
-              const lerpFactor = isGliding ? 0.08 : 0.45;
+              // Lazy, smooth vertical extension (0.035 lerp while gliding, 0.35 while tracking scroll)
+              const lerpFactor = isGliding ? 0.035 : 0.35;
               currentTop += (rect.top - currentTop) * lerpFactor;
               currentLeft += (rect.left - currentLeft) * lerpFactor;
               currentWidth += (rect.width - currentWidth) * lerpFactor;
@@ -1401,7 +1474,7 @@ const LaserFlow = ({
         const nextStage = stage + 1;
         setUserChoices(prev => ({ ...prev, [stage]: choice }));
         setStage(nextStage);
-        glidingUntilRef.current = Date.now() + 1400; // 1.4s smooth glide
+        glidingUntilRef.current = Date.now() + 3000; // 3.0s lazy, slow, cinematic glide
 
         setTimeout(() => {
           const cardRefs = [cardRef0, cardRef1, cardRef2, cardRef3, cardRef4, cardRef5];
@@ -1409,21 +1482,18 @@ const LaserFlow = ({
           if (nextTarget) {
             nextTarget.scrollIntoView({ behavior: "smooth", block: "center" });
           }
-        }, 120);
+        }, 160);
       };
 
-      // Exactly matches ReactBits Waterfall preset (0.6 desktop, 0.5 mobile)
-      const beamPosition = narrow ? 0.5 : 0.6;
-
       return (
-        <div className="min-h-screen bg-[#0b0b0e] text-slate-200 px-4 sm:px-8 py-10 flex flex-col items-center justify-start relative text-left">
+        <div className="min-h-screen bg-[#0b0b0e] text-slate-200 px-4 sm:px-8 py-12 flex flex-col items-center justify-start relative text-left">
           
-          {/* Full-Viewport Fixed LaserFlow Background & Proxy Surface */}
+          {/* Full-Viewport Fixed LaserFlow Background with Symmetric 0.5 Beam */}
           <BeamBackground
             proxyRef={proxyRef}
             run={run}
             webgl2={webgl2}
-            beamPosition={beamPosition}
+            beamPosition={0.5}
             phone={phone}
             coarse={coarse}
             reduced={reduced}
@@ -1447,39 +1517,31 @@ const LaserFlow = ({
             </button>
           )}
 
-          {/* Main Content Layout Container */}
-          <div className="w-full max-w-3xl z-10 relative flex flex-col gap-12 my-6">
+          {/* Main Content Layout Column */}
+          <div className="w-full max-w-3xl z-10 relative flex flex-col gap-12 my-4">
 
-            {/* Top Branding Pill & Heading */}
-            <div className="flex flex-col items-center text-center">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-[#3847ff] text-xs font-mono font-bold tracking-widest uppercase mb-4 shadow-[0_0_15px_rgba(56,71,255,0.2)]">
-                <span className="w-2 h-2 rounded-full bg-[#3847ff] animate-ping inline-block" />
-                UPES AUTONOMOUS PATROL ROVER
-              </div>
-              <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight uppercase mb-2 font-mono">
-                Bare-Metal Edge Perception Engine
+            {/* ── PHASE 1: HERO SECTION (CLEAN HUMAN SANS-SERIF) ── */}
+            <div className="flex flex-col items-center text-center pt-2 pb-2">
+              <h1 className="text-4xl sm:text-6xl font-bold tracking-tight text-white mb-5 font-sans">
+                Autonomous Patrol Rover
               </h1>
-              <p className="text-slate-400 text-sm sm:text-base max-w-2xl mx-auto mb-2 font-sans">
-                Autonomous mobile robot architecture featuring zero-latency MPS neural acceleration, pure pursuit trajectory control, and deterministic physics execution.
+              <p className="text-slate-300 text-base sm:text-lg font-normal leading-relaxed max-w-2xl mx-auto font-sans">
+                A custom 3D robotics simulation running real-time AI vision entirely on local hardware. We engineered a platform that uses YOLOv8 and OpenAI CLIP to navigate, spot objects, and patrol environments without relying on cloud processing.
               </p>
             </div>
 
-            {/* ── CARD 0: HERO TERMINAL & THE CONSCIOUS BRIEFING ── */}
-            <div
+            {/* ── CARD 0: INITIAL TERMINAL BOOT & ARCHITECTURE PROMPT ── */}
+            <section
               id="card-hero"
               ref={cardRef0}
               className="w-full rounded-2xl shadow-2xl border border-white/10 overflow-hidden bg-[#0d0d0d] z-10 transition-all duration-300"
             >
               <TerminalCard />
               
-              {/* Technical Manifesto Overview & Prompt 0 */}
               <div className="p-5 sm:p-6 border-t border-white/10 bg-[#141416]/95">
                 <div className="mb-4">
-                  <div className="text-xs font-mono font-bold text-[#00e5ff] uppercase tracking-wider mb-2">
-                    THE CONSCIOUS // SOVEREIGN EDGE STACK
-                  </div>
-                  <p className="text-slate-200 text-xs sm:text-sm leading-relaxed font-sans">
-                    True autonomous robotics demands deterministic 60 FPS physics and sub-millisecond IPC loops that cloud virtual machines cannot deliver. To achieve zero-latency perception without cloud API rate limits, our architecture executes dual neural networks (YOLOv8 + CLIP) directly on bare-metal Apple Silicon MPS and NVIDIA CUDA cores. This sovereign edge stack translates raw 1280x720 sensory streams into motor telemetry with zero dropped frames.
+                  <p className="text-slate-200 text-sm sm:text-base leading-relaxed font-sans">
+                    Autonomous robotics requires deterministic 60 FPS physics and sub-millisecond IPC loops. Instead of offloading video feeds to high-latency cloud servers, our architecture runs dual neural networks directly on Apple Silicon MPS and NVIDIA CUDA cores at zero latency.
                   </p>
                 </div>
 
@@ -1491,286 +1553,323 @@ const LaserFlow = ({
                   onAdvance={advanceStage}
                 />
               </div>
-            </div>
+            </section>
 
-            {/* ── CARD 1: STAGE 1 YOLO SPATIAL PERCEPTION ── */}
+            {/* ── STAGE 1: MEDIA BREAKOUT + DEDICATED TERMINAL ── */}
             {stage >= 1 && (
-              <MacWindow
+              <section
                 ref={cardRef1}
                 id="card-stage-1"
-                title="bash - yolo_spatial_cortex - 80x24"
-                className="w-full z-10 animate-fadeIn"
-                badge={
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#22c55e]/10 text-[#22c55e] border border-[#22c55e]/20">
-                    mAP50: 94.2%
-                  </span>
-                }
+                className="w-full flex flex-col gap-6 z-10 transition-all duration-300"
               >
-                <div className="mb-4">
-                  <div className="text-xs font-mono font-bold text-[#00e5ff] uppercase tracking-wider mb-1">
-                    STAGE 1 // REAL-TO-SIM SPATIAL PERCEPTION
+                {/* Out-of-Terminal High-Resolution Visual Proof */}
+                <MediaBreakout
+                  title="Real-to-Sim Spatial Perception"
+                  badge="94.2% mAP50"
+                  caption="Our YOLOv8x vision cortex fine-tuned on custom synthetic datasets, achieving sub-15ms multi-object detection and rapid loss convergence."
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-2">
+                      <div className="text-xs font-mono text-slate-400">Live Multi-Object Bounding Boxes</div>
+                      <div className="rounded-xl overflow-hidden border border-white/10 aspect-video bg-black/60 flex items-center justify-center">
+                        <img
+                          src="./media/yolo_vision.png"
+                          alt="YOLOv8 Multi-Object Real-Time Vision"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <div className="text-xs font-mono text-slate-400">Training Loss & Convergence</div>
+                      <div className="rounded-xl overflow-hidden border border-white/10 aspect-video bg-black/60 flex items-center justify-center">
+                        <img
+                          src="./media/yolo_metrics.png"
+                          alt="YOLOv8 Metrics and Training Convergence"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <h3 className="text-lg sm:text-xl font-extrabold text-white font-mono mb-2">
-                    Dual Neural Acceleration (YOLOv8x + MPS)
-                  </h3>
-                  <p className="text-slate-300 text-xs sm:text-sm leading-relaxed font-sans">
-                    Our YOLOv8x spatial cortex was fine-tuned on a custom 5-class Real-to-Sim dataset (traffic cones, hazard boxes, wooden crates, modern chairs, potted plants). The model achieved rapid loss convergence (mAP50: 94.2%, Precision: 92.8%) through synthetic augmentation and AdamW optimization, enabling sub-15ms multi-object bounding box tracking.
-                  </p>
-                </div>
+                </MediaBreakout>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-5">
-                  <MacWindow title="yolo_metrics.png - Preview" innerClassName="p-2">
-                    <img
-                      src="./media/yolo_metrics.png"
-                      alt="YOLOv8 Metrics and Training Convergence"
-                      className="w-full h-auto rounded-lg object-cover"
-                    />
-                  </MacWindow>
+                {/* Clean Terminal Window (Logs & Prompt Only) */}
+                <MacWindow
+                  title="bash - yolo-inference - 80x24"
+                  className="w-full"
+                  badge={
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#22c55e]/10 text-[#22c55e] border border-[#22c55e]/20">
+                      3.2ms / frame
+                    </span>
+                  }
+                >
+                  <div className="font-mono text-xs sm:text-[13px] leading-relaxed text-slate-300 space-y-1 mb-4">
+                    <div className="text-slate-400">
+                      <span className="text-[#38bdf8]">[YOLO]</span> Loading weights <span className="text-amber-300">yolov8x-real2sim.pt</span> (38.2M params)
+                    </div>
+                    <div className="text-slate-300">
+                      <span className="text-[#22c55e]">[INFER]</span> Frame 1042: 1 cone (0.94), 1 crate (0.88), 1 chair (0.91) | Latency: 3.2ms
+                    </div>
+                    <div className="text-slate-400">
+                      <span className="text-[#a855f7]">[TRACK]</span> ByteTrack filter initialized: ID #12 locked on target waypoint
+                    </div>
+                  </div>
 
-                  <MacWindow title="yolo_vision.png - Preview" innerClassName="p-2">
-                    <img
-                      src="./media/yolo_vision.png"
-                      alt="YOLOv8 Multi-Object Real-Time Vision"
-                      className="w-full h-auto rounded-lg object-cover"
-                    />
-                  </MacWindow>
-                </div>
-
-                <PromptRow
-                  promptText="Inspect CLIP Semantic Reasoning Engine? [Y/N]:"
-                  stageIndex={1}
-                  currentStage={stage}
-                  userChoice={userChoices[1]}
-                  onAdvance={advanceStage}
-                />
-              </MacWindow>
+                  <PromptRow
+                    promptText="Inspect CLIP Semantic Reasoning Engine? [Y/N]:"
+                    stageIndex={1}
+                    currentStage={stage}
+                    userChoice={userChoices[1]}
+                    onAdvance={advanceStage}
+                  />
+                </MacWindow>
+              </section>
             )}
 
-            {/* ── CARD 2: STAGE 2 CLIP SEMANTIC REASONING ── */}
+            {/* ── STAGE 2: MEDIA BREAKOUT + DEDICATED TERMINAL ── */}
             {stage >= 2 && (
-              <MacWindow
+              <section
                 ref={cardRef2}
                 id="card-stage-2"
-                title="bash - clip_semantic_reasoning - 80x24"
-                className="w-full z-10 animate-fadeIn"
-                badge={
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#a855f7]/10 text-[#a855f7] border border-[#a855f7]/20">
-                    ViT-B/32 ZERO-SHOT
-                  </span>
-                }
+                className="w-full flex flex-col gap-6 z-10 transition-all duration-300"
               >
-                <div className="mb-4">
-                  <div className="text-xs font-mono font-bold text-[#00e5ff] uppercase tracking-wider mb-1">
-                    STAGE 2 // ZERO-SHOT NATURAL LANGUAGE GOAL ACQUISITION
-                  </div>
-                  <h3 className="text-lg sm:text-xl font-extrabold text-white font-mono mb-2">
-                    OpenAI CLIP Zero-Shot Bumper Inference
-                  </h3>
-                  <p className="text-slate-300 text-xs sm:text-sm leading-relaxed font-sans">
-                    OpenAI CLIP powers the rover's semantic reasoning engine, extracting zero-shot visual embeddings from 1st-person bumper camera feeds. Rather than relying on fixed classes, operators can issue arbitrary natural language directives (e.g., 'blue chair', 'wooden hazard box'), calculating cosine similarity across the semantic cache to achieve autonomous target acquisition.
-                  </p>
-                </div>
-
-                <div className="my-5">
-                  <MacWindow title="clip_reasoning.png - Preview (FPP 1st-Person Bumper POV)" innerClassName="p-2">
+                {/* Out-of-Terminal High-Resolution Visual Proof */}
+                <MediaBreakout
+                  title="Zero-Shot Semantic Target Acquisition"
+                  badge="ViT-B/32"
+                  caption="OpenAI CLIP extracts zero-shot visual embeddings from the first-person bumper camera, matching natural language operator goals against the scene in real time."
+                >
+                  <div className="rounded-xl overflow-hidden border border-white/10 aspect-video bg-black/60 flex items-center justify-center">
                     <img
                       src="./media/clip_reasoning.png"
                       alt="CLIP Semantic Reasoning on Blue Chair"
-                      className="w-full max-h-[460px] object-contain rounded-lg mx-auto"
+                      className="w-full h-full object-contain mx-auto"
                     />
-                  </MacWindow>
-                </div>
+                  </div>
+                </MediaBreakout>
 
-                <PromptRow
-                  promptText="View Live Multi-Angle Telemetry? [Y/N]:"
-                  stageIndex={2}
-                  currentStage={stage}
-                  userChoice={userChoices[2]}
-                  onAdvance={advanceStage}
-                />
-              </MacWindow>
+                {/* Clean Terminal Window (Logs & Prompt Only) */}
+                <MacWindow
+                  title="bash - clip-search - 80x24"
+                  className="w-full"
+                  badge={
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#a855f7]/10 text-[#a855f7] border border-[#a855f7]/20">
+                      512-dim Cosine
+                    </span>
+                  }
+                >
+                  <div className="font-mono text-xs sm:text-[13px] leading-relaxed text-slate-300 space-y-1 mb-4">
+                    <div className="text-slate-400">
+                      <span className="text-[#a855f7]">[VLM]</span> Target Query: <span className="text-emerald-300">&quot;blue chair&quot;</span> -&gt; 512-dim normalized vector
+                    </div>
+                    <div className="text-slate-300">
+                      <span className="text-[#ec4899]">[CLIP]</span> Cosine Match: blue_chair=0.962, hazard_cone=0.141, wooden_crate=0.123
+                    </div>
+                    <div className="text-slate-400">
+                      <span className="text-[#38bdf8]">[NAV]</span> Target locked: bearing +12.4°, range 1.85m -&gt; routing pure pursuit
+                    </div>
+                  </div>
+
+                  <PromptRow
+                    promptText="View Live Multi-Angle Telemetry? [Y/N]:"
+                    stageIndex={2}
+                    currentStage={stage}
+                    userChoice={userChoices[2]}
+                    onAdvance={advanceStage}
+                  />
+                </MacWindow>
+              </section>
             )}
 
-            {/* ── CARD 3: STAGE 3 SIMULATION DIGITAL TWIN ── */}
+            {/* ── STAGE 3: MEDIA BREAKOUT + DEDICATED TERMINAL ── */}
             {stage >= 3 && (
-              <MacWindow
+              <section
                 ref={cardRef3}
                 id="card-stage-3"
-                title="QuickTime - simulation_digital_twin - 60 FPS"
-                className="w-full z-10 animate-fadeIn"
-                badge={
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#00ff9d]/10 text-[#00ff9d] border border-[#00ff9d]/20">
-                    60 FPS RIGID-BODY
-                  </span>
-                }
+                className="w-full flex flex-col gap-6 z-10 transition-all duration-300"
               >
-                <div className="mb-4">
-                  <div className="text-xs font-mono font-bold text-[#00e5ff] uppercase tracking-wider mb-1">
-                    STAGE 3 // 60 FPS DETERMINISTIC RIGID-BODY DYNAMICS
+                {/* Out-of-Terminal Cinematic Video Display */}
+                <MediaBreakout
+                  title="Deterministic 60 FPS Physics Simulation"
+                  badge="Webots + WebSocket IPC"
+                  caption="Rigid-body robotics dynamics synchronized with the local FastAPI backend through a sub-millisecond WebSocket bridge."
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-2">
+                      <div className="text-xs font-mono text-slate-400">Chase Camera POV</div>
+                      <div className="rounded-xl overflow-hidden border border-white/10 aspect-video bg-black/60 flex items-center justify-center">
+                        <video
+                          src="./media/chase_mode.mp4"
+                          autoPlay
+                          loop
+                          muted
+                          playsInline
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <div className="text-xs font-mono text-slate-400">Top-Down Tactical POV</div>
+                      <div className="rounded-xl overflow-hidden border border-white/10 aspect-video bg-black/60 flex items-center justify-center">
+                        <video
+                          src="./media/patrol_mode.mp4"
+                          autoPlay
+                          loop
+                          muted
+                          playsInline
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <h3 className="text-lg sm:text-xl font-extrabold text-white font-mono mb-2">
-                    Webots Simulation & WebSocket IPC Bridge
-                  </h3>
-                  <p className="text-slate-300 text-xs sm:text-sm leading-relaxed font-sans">
-                    Deterministic rigid-body dynamics run at 60 FPS in Webots, synchronized with our FastAPI backend through a sub-millisecond WebSocket IPC bridge. Differential drive kinematics translate high-level neural waypoints and pursuit angles directly into left/right wheel angular velocities (rad/s) with real-time collision avoidance.
-                  </p>
-                </div>
+                </MediaBreakout>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-5">
-                  <MacWindow title="chase_mode.mp4 - QuickTime Player (3rd-Person Chase)" innerClassName="p-2">
-                    <video
-                      src="./media/chase_mode.mp4"
-                      autoPlay
-                      loop
-                      muted
-                      playsInline
-                      className="w-full h-auto rounded-lg object-cover"
-                    />
-                  </MacWindow>
+                {/* Clean Terminal Window (Logs & Prompt Only) */}
+                <MacWindow
+                  title="bash - simulation-supervisor - 80x24"
+                  className="w-full"
+                  badge={
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#00ff9d]/10 text-[#00ff9d] border border-[#00ff9d]/20">
+                      60 FPS Synced
+                    </span>
+                  }
+                >
+                  <div className="font-mono text-xs sm:text-[13px] leading-relaxed text-slate-300 space-y-1 mb-4">
+                    <div className="text-slate-400">
+                      <span className="text-[#00ff9d]">[IPC]</span> WebSocket bridge active on <span className="text-cyan-300">ws://127.0.0.1:7860/ws/telemetry</span>
+                    </div>
+                    <div className="text-slate-300">
+                      <span className="text-[#38bdf8]">[PHYSICS]</span> Webots step: 16.6ms (60.0 FPS stable) | Zero frame drops
+                    </div>
+                    <div className="text-slate-400">
+                      <span className="text-[#eab308]">[CONTROL]</span> Diff drive: left=4.2 rad/s, right=3.8 rad/s | Collision avoidance clear
+                    </div>
+                  </div>
 
-                  <MacWindow title="patrol_mode.mp4 - QuickTime Player (Top-Down Alternate View)" innerClassName="p-2">
-                    <video
-                      src="./media/patrol_mode.mp4"
-                      autoPlay
-                      loop
-                      muted
-                      playsInline
-                      className="w-full h-auto rounded-lg object-cover"
-                    />
-                  </MacWindow>
-                </div>
-
-                <PromptRow
-                  promptText="Initialize bare-metal deployment? [Y/N]:"
-                  stageIndex={3}
-                  currentStage={stage}
-                  userChoice={userChoices[3]}
-                  onAdvance={advanceStage}
-                />
-              </MacWindow>
+                  <PromptRow
+                    promptText="Initialize bare-metal deployment? [Y/N]:"
+                    stageIndex={3}
+                    currentStage={stage}
+                    userChoice={userChoices[3]}
+                    onAdvance={advanceStage}
+                  />
+                </MacWindow>
+              </section>
             )}
 
-            {/* ── CARD 4: STAGE 4 BARE-METAL BENCHMARKS & CLI ── */}
+            {/* ── STAGE 4: BARE-METAL RUNBOOK & BENCHMARKS ── */}
             {stage >= 4 && (
-              <MacWindow
+              <section
                 ref={cardRef4}
                 id="card-stage-4"
-                isTerminal={true}
-                title="Terminal - root@rover-mps - 80x24"
-                className="w-full z-10 animate-fadeIn"
-                badge={
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/20">
-                    CLI RUNBOOK
-                  </span>
-                }
+                className="w-full flex flex-col gap-6 z-10 transition-all duration-300"
               >
-                <div className="mb-4">
-                  <div className="text-xs font-mono font-bold text-[#00ff9d] uppercase tracking-wider mb-1">
-                    STAGE 4 // ZERO-DEPENDENCY REPLICATION RUNBOOK
+                <MacWindow
+                  isTerminal={true}
+                  title="Terminal - root@rover-mps - 80x24"
+                  className="w-full"
+                  badge={
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#38bdf8]/10 text-[#38bdf8] border border-[#38bdf8]/20">
+                      Local Setup
+                    </span>
+                  }
+                >
+                  <div className="mb-4">
+                    <p className="text-slate-300 text-sm leading-relaxed font-sans mb-3">
+                      Run the entire simulation, vision pipelines, and IPC control loop locally on Apple Silicon MPS or NVIDIA CUDA:
+                    </p>
+                    <div className="text-xs text-slate-500 font-mono mb-2">
+                      Last login: {new Date().toLocaleDateString()} on ttys004
+                    </div>
                   </div>
-                  <h3 className="text-lg sm:text-xl font-extrabold text-white font-mono mb-2">
-                    Bare-Metal Edge Execution & Hardware Profiler
-                  </h3>
-                  <div className="text-xs text-slate-400 font-mono mb-3">
-                    Last login: {new Date().toLocaleDateString()} on ttys004
-                  </div>
-                </div>
 
-                <CommandSnippet
-                  command="git clone https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git && cd Autonomous-Patrol-Rover"
-                  note="Clone bare-metal perception engine"
-                />
-                <CommandSnippet
-                  command="poetry install && poetry run python -m core.engine --device mps"
-                  note="Initialize zero-latency MPS runtime"
-                />
-                <CommandSnippet
-                  command="curl -s http://localhost:7860/api/telemetry/health | jq ."
-                  note="Verify 60 FPS deterministic loop"
-                />
+                  <CommandSnippet
+                    command="git clone https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git && cd Autonomous-Patrol-Rover"
+                    note="Clone repository"
+                  />
+                  <CommandSnippet
+                    command="poetry install && poetry run python -m core.engine --device mps"
+                    note="Launch zero-latency engine"
+                  />
+                  <CommandSnippet
+                    command="curl -s http://localhost:7860/api/telemetry/health | jq ."
+                    note="Verify 60 FPS deterministic loop"
+                  />
 
-                <div className="mt-5 p-4 rounded-xl bg-[#141416]/80 border border-white/5 font-mono text-xs">
-                  <div className="text-slate-400 font-bold uppercase tracking-wider mb-2 border-b border-white/10 pb-1">
-                    Edge Telemetry Profiler Results (M-Series MPS)
+                  {/* Benchmark Profiler */}
+                  <div className="mt-5 p-4 rounded-xl bg-[#141416]/80 border border-white/5 font-mono text-xs">
+                    <div className="text-slate-400 font-medium mb-2 border-b border-white/10 pb-1">
+                      Hardware Profiler Benchmarks (Apple Silicon M-Series MPS)
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center pt-1">
+                      <div className="p-2 rounded bg-black/40 border border-white/5">
+                        <div className="text-slate-400 text-[10px]">MPS Core Util</div>
+                        <div className="text-[#22c55e] font-bold text-sm">78.4%</div>
+                      </div>
+                      <div className="p-2 rounded bg-black/40 border border-white/5">
+                        <div className="text-slate-400 text-[10px]">YOLOv8 Infer</div>
+                        <div className="text-[#38bdf8] font-bold text-sm">3.2 ms</div>
+                      </div>
+                      <div className="p-2 rounded bg-black/40 border border-white/5">
+                        <div className="text-slate-400 text-[10px]">CLIP Cosine</div>
+                        <div className="text-[#a855f7] font-bold text-sm">12.4 ms</div>
+                      </div>
+                      <div className="p-2 rounded bg-black/40 border border-white/5">
+                        <div className="text-slate-400 text-[10px]">Physics Loop</div>
+                        <div className="text-[#eab308] font-bold text-sm">60.2 FPS</div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center pt-1">
-                    <div className="p-2 rounded bg-black/40 border border-white/5">
-                      <div className="text-slate-400 text-[10px]">MPS Core Util</div>
-                      <div className="text-[#22c55e] font-bold text-sm">78.4%</div>
-                    </div>
-                    <div className="p-2 rounded bg-black/40 border border-white/5">
-                      <div className="text-slate-400 text-[10px]">YOLOv8 Infer</div>
-                      <div className="text-[#38bdf8] font-bold text-sm">3.2 ms</div>
-                    </div>
-                    <div className="p-2 rounded bg-black/40 border border-white/5">
-                      <div className="text-slate-400 text-[10px]">CLIP Cosine</div>
-                      <div className="text-[#a855f7] font-bold text-sm">12.4 ms</div>
-                    </div>
-                    <div className="p-2 rounded bg-black/40 border border-white/5">
-                      <div className="text-slate-400 text-[10px]">Physics Loop</div>
-                      <div className="text-[#eab308] font-bold text-sm">60.2 FPS</div>
-                    </div>
-                  </div>
-                </div>
 
-                <PromptRow
-                  promptText="Access Source Code Repository? [Y/N]:"
-                  stageIndex={4}
-                  currentStage={stage}
-                  userChoice={userChoices[4]}
-                  onAdvance={advanceStage}
-                />
-              </MacWindow>
+                  <PromptRow
+                    promptText="Access Source Code Repository? [Y/N]:"
+                    stageIndex={4}
+                    currentStage={stage}
+                    userChoice={userChoices[4]}
+                    onAdvance={advanceStage}
+                  />
+                </MacWindow>
+              </section>
             )}
 
-            {/* ── CARD 5: STAGE 5 THE HUB & GITHUB LAUNCH ── */}
+            {/* ── STAGE 5: THE HUB & REPOSITORY LAUNCH ── */}
             {stage >= 5 && (
-              <MacWindow
+              <section
                 ref={cardRef5}
                 id="card-stage-5"
-                title="bash - github_deployment - release"
-                className="w-full z-10 animate-fadeIn"
-                badge={
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#00ff9d]/10 text-[#00ff9d] border border-[#00ff9d]/20">
-                    v2.4.0-EDGE
-                  </span>
-                }
+                className="w-full rounded-2xl border border-white/10 bg-[#121215]/95 backdrop-blur-xl shadow-2xl p-8 sm:p-10 text-center z-10 transition-all duration-300"
               >
-                <div className="text-center py-6">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[#00ff9d] text-xs font-mono font-bold tracking-widest uppercase mb-4">
-                    <span className="w-2 h-2 rounded-full bg-[#00ff9d] inline-block" />
-                    Sovereign Edge Deployment Complete
-                  </div>
+                <h3 className="text-3xl sm:text-4xl font-bold text-white mb-4 font-sans tracking-tight">
+                  Ready to run locally.
+                </h3>
 
-                  <h3 className="text-2xl sm:text-3xl font-extrabold text-white font-mono mb-4">
-                    Autonomous Patrol Rover Repository
-                  </h3>
+                <p className="text-slate-300 text-sm sm:text-base max-w-xl mx-auto mb-8 leading-relaxed font-sans">
+                  Autonomous robotics requires sub-millisecond IPC loops and predictable frame times. By targeting host Apple Silicon MPS and NVIDIA CUDA cores directly, we eliminate cloud latency and API rate limits. The entire codebase, simulation worlds, and neural weights are open source.
+                </p>
 
-                  <p className="text-slate-300 text-xs sm:text-sm max-w-xl mx-auto mb-8 leading-relaxed font-sans">
-                    As a computer science student engineering a real-world autonomous system, relying on standard cloud deployments wasn't an option. True autonomous robotics demands 60 FPS deterministic physics and sub-millisecond IPC loops. To achieve this, we engineered a local-first architecture, hijacking the host machine's Apple Silicon MPS and NVIDIA CUDA cores to run dual neural networks (YOLOv8 + CLIP) at zero latency. This is a bare-metal edge perception engine built for rigorous academic evaluation.
-                  </p>
-
+                <div className="flex justify-center">
                   <a
                     href="https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group inline-flex items-center gap-4 bg-[#1c1c1e] hover:bg-[#00ff9d] text-[#00ff9d] hover:text-[#0b0b0e] border border-[#00ff9d]/50 font-black text-sm sm:text-base px-8 py-5 rounded-2xl shadow-[0_0_25px_rgba(0,255,157,0.4)] hover:shadow-[0_0_40px_rgba(0,255,157,0.8)] transition-all duration-300 transform hover:scale-105 font-mono"
+                    className="group inline-flex items-center gap-3.5 bg-[#1c1c1e] hover:bg-[#00ff9d] text-[#00ff9d] hover:text-[#0b0b0e] border border-[#00ff9d]/50 font-bold text-sm sm:text-base px-8 py-4 rounded-xl shadow-[0_0_25px_rgba(0,255,157,0.35)] hover:shadow-[0_0_40px_rgba(0,255,157,0.7)] transition-all duration-300 transform hover:scale-[1.03] font-sans"
                   >
-                    <svg className="w-6 h-6 fill-current transition-colors" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5 fill-current transition-colors" viewBox="0 0 24 24">
                       <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
                     </svg>
-                    <span>EXPLORE REPOSITORY ON GITHUB</span>
-                    <span className="text-xs bg-white/10 group-hover:bg-[#0b0b0e] text-[#00ff9d] px-2.5 py-1 rounded-md font-mono font-bold">
-                      v2.4.0-EDGE
+                    <span>EXPLORE ON GITHUB</span>
+                    <span className="text-xs bg-white/10 group-hover:bg-[#0b0b0e] text-[#00ff9d] px-2 py-0.5 rounded font-mono font-medium">
+                      v2.4.0
                     </span>
                   </a>
                 </div>
-              </MacWindow>
+              </section>
             )}
 
             {/* Footer */}
-            <footer className="mt-8 mb-6 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 font-mono gap-2">
-              <div>UPES Department of Computer Science & Robotics</div>
+            <footer className="mt-8 mb-6 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 font-sans gap-2 border-t border-white/5 pt-6">
+              <div>UPES Department of Computer Science &amp; Robotics</div>
               <a
                 href="https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover"
                 target="_blank"
@@ -1785,8 +1884,7 @@ const LaserFlow = ({
         </div>
       );
     }
-
-    // Mount to DOM root
+// Mount to DOM root
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<ManifestoApp />);
   </script>
