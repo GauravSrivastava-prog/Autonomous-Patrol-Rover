@@ -72,6 +72,24 @@
       pointer-events: none;
     }
 
+        /* Full-Bleed 100vw Hero Styling */
+    .laser-hero {
+      position: relative;
+      width: 100%;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    .laser-hero__layer {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .hero-text-shadow {
+      text-shadow: 0 2px 18px rgba(0, 0, 0, 0.9), 0 1px 4px rgba(0, 0, 0, 0.95);
+    }
+
     /* Ambient GPU-Friendly CSS Card Glow (Zero JS / Zero WebGL Cost) */
     .ambient-card-glow {
       position: relative;
@@ -3908,7 +3926,7 @@ const Folder = ({
       }, [stage, lightboxImage]);
 
       return (
-        <div className="min-h-screen bg-[#0b0b0e] text-slate-200 px-4 sm:px-8 py-10 flex flex-col items-center justify-start relative text-left">
+        <div className="min-h-screen bg-[#0b0b0e] text-slate-200 flex flex-col items-center justify-start relative text-left overflow-x-hidden">
           
           {/* Floating Replay Intro Button (Fixed Top-Right) */}
           {webgl2 && !reduced && (
@@ -3928,50 +3946,54 @@ const Folder = ({
             </button>
           )}
 
-          {/* Main Content Layout Column (Spacious max-w-4xl Frame) */}
-          <div className="w-full max-w-4xl z-10 relative flex flex-col gap-14 my-2">
+          {/* ── FULL-BLEED 100vw HERO SECTION (No Side Dead Margins — Unmodified LaserFlow Canvas Spans Full Screen) ── */}
+          <section className="laser-hero relative w-full min-h-screen flex flex-col items-center justify-start pt-6 pb-12 px-4 sm:px-8 overflow-hidden z-10">
+            {/* Full-Bleed 100vw LaserFlow Layer */}
+            {webgl2 ? (
+              <div className="laser-hero__layer absolute inset-0 w-full h-full pointer-events-none z-0 overflow-hidden">
+                <LaserFlow
+                  key={run}
+                  surfaceRef={heroCardRef}
+                  beamPosition={0.5}
+                  color="#3847ff"
+                  intensity={phone ? 1.5 : 1.8}
+                  beamWidth={phone ? 1.2 : 1.5}
+                  flare={phone ? 1.2 : 1.5}
+                  spread={phone ? 1.2 : 1.5}
+                  spill={1.0}
+                  fog={0.2}
+                  dust={1.6}
+                  streaks={1.5}
+                  dots={1.0}
+                  pulse={1.5}
+                  speed={1.5}
+                  seed={3}
+                  mouseInteraction={!coarse}
+                  revealImage="./laserflow-reveal.png"
+                  revealRadius={phone ? 220 : 320}
+                  revealOpacity={0.65}
+                  intro={!reduced}
+                  theme="dark"
+                  dpr={phone ? 1.25 : 1.5}
+                />
+              </div>
+            ) : (
+              <div className="laser-hero__fallback" aria-hidden="true" />
+            )}
 
-            {/* ── HERO STAGE (LaserFlow Bounded in Hero Only — Auto-Pauses via IntersectionObserver on Scroll) ── */}
-            <div className="hero-stage-wrapper relative w-full overflow-hidden rounded-3xl pt-2 pb-2 flex flex-col items-center">
-              {/* Unmodified WebGL2 LaserFlow Canvas (Mounted ONLY in Hero) */}
-              {webgl2 ? (
-                <div className="absolute inset-0 w-full h-full pointer-events-none z-0 overflow-hidden">
-                  <LaserFlow
-                    key={run}
-                    surfaceRef={heroCardRef}
-                    beamPosition={0.5}
-                    color="#3847ff"
-                    intensity={phone ? 1.5 : 1.8}
-                    beamWidth={phone ? 1.2 : 1.5}
-                    flare={phone ? 1.2 : 1.5}
-                    spread={phone ? 1.2 : 1.5}
-                    spill={1.0}
-                    fog={0.2}
-                    dust={1.6}
-                    streaks={1.5}
-                    dots={1.0}
-                    pulse={1.5}
-                    speed={1.5}
-                    seed={3}
-                    mouseInteraction={!coarse}
-                    revealImage="./laserflow-reveal.png"
-                    revealRadius={220}
-                    revealOpacity={0.6}
-                    intro={!reduced}
-                    theme="dark"
-                    dpr={phone ? 1.25 : 1.5}
-                  />
-                </div>
-              ) : (
-                <div className="laser-hero__fallback" aria-hidden="true" />
-              )}
-
+            {/* Centered Inner Content Wrapper floating above full-bleed layer */}
+            <div className="relative z-10 w-full max-w-[960px] mx-auto flex flex-col items-center">
+              
               {/* ── HERO HEADER SECTION ── */}
-              <div className="relative z-10 flex flex-col items-center text-center pt-4 pb-6 px-4">
-                <h1 className="text-4xl sm:text-6xl font-bold tracking-tight text-white mb-5 font-sans">
+              <div className="flex flex-col items-center text-center pt-4 pb-6 px-4">
+                <h1
+                  className="text-4xl sm:text-6xl font-bold tracking-tight text-white mb-5 font-sans hero-text-shadow"
+                >
                   Autonomous Patrol Rover
                 </h1>
-                <p className="text-slate-300 text-base sm:text-lg font-normal leading-relaxed max-w-2xl mx-auto font-sans">
+                <p
+                  className="text-slate-300 text-base sm:text-lg font-normal leading-relaxed max-w-2xl mx-auto font-sans hero-text-shadow"
+                >
                   A custom 3D robotics simulation running real-time AI vision entirely on local hardware. We engineered a platform that uses YOLOv8 and OpenAI CLIP to navigate, spot objects, and patrol environments without relying on cloud processing.
                 </p>
               </div>
@@ -3980,7 +4002,7 @@ const Folder = ({
               <section
                 id="card-hero"
                 ref={heroCardRef}
-                className="relative z-10 w-full rounded-2xl shadow-2xl border border-white/10 overflow-hidden bg-[#0d0d0d] ambient-card-glow transition-all duration-300"
+                className="w-full rounded-2xl shadow-2xl border border-white/10 overflow-hidden bg-[#0d0d0d] ambient-card-glow transition-all duration-300"
               >
                 <TerminalCard />
                 
@@ -4001,6 +4023,10 @@ const Folder = ({
                 </div>
               </section>
             </div>
+          </section>
+
+          {/* ── LOWER CONTENT SECTIONS (Stages 1 to 5) Inside max-w-4xl Column ── */}
+          <div className="w-full max-w-4xl z-10 relative flex flex-col gap-14 my-8 px-4 sm:px-8">
 
             {/* ── STAGE 1: MODEL PERFORMANCE & TELEMETRY + SPATIAL CORTEX ── */}
             {stage >= 1 && (
