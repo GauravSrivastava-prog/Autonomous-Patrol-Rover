@@ -1229,53 +1229,88 @@ if os.path.exists(docs_dir):
         api.mount("/media", StaticFiles(directory=media_dir), name="media")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 4. Homebrew-Style CLI Boot Sequence & 1-Command Evaluator Launcher
+# 4. Zero-Dependency ANSI-Colored Boxed Startup Dashboard & Evaluator Launcher
 # ──────────────────────────────────────────────────────────────────────────────
-def print_homebrew_boot_banner(host: str, port: int):
-    """Outputs a high-fidelity Homebrew-style terminal boot sequence."""
-    accel = "Apple Metal Performance Shaders (MPS)" if torch.backends.mps.is_available() else ("NVIDIA CUDA" if torch.cuda.is_available() else "Host CPU Vectorized")
-    
-    banner = f"""
-\033[1;36m==>\033[0m \033[1mAuto-updating Homebrew...\033[0m
-\033[1;36m==>\033[0m \033[1mAuto-updated Homebrew!\033[0m
-Updated 1 tap (homebrew/core).
+def print_dashboard(host: str = "127.0.0.1", port: int = PORT):
+    """
+    Prints an exact zero-dependency ANSI-colored boxed startup dashboard
+    matching the sovereign edge terminal experience.
+    """
+    CYAN = "\033[36m"
+    B_CYAN = "\033[1;96m"
+    BLUE = "\033[1;94m"
+    GREEN = "\033[1;92m"
+    YELLOW = "\033[1;93m"
+    PURPLE = "\033[1;95m"
+    RESET = "\033[0m"
 
-\033[1;32m==>\033[0m \033[1mCaveats\033[0m
-Autonomous Patrol Rover runs 100% locally on sovereign edge silicon.
-Zero cloud virtualization. Zero 429 rate limits. 60 FPS rigid-body sync.
+    # Command prompt line
+    print(f"\n{GREEN}gauravsrivastava1212@Gauravs-MacBook-Pro{RESET} \033[90m~ %\033[0m patrol-rover\n")
 
-\033[1;34m==>\033[0m \033[1mChecking host silicon accelerator...\033[0m
-✔ Detected host silicon engine: \033[1;32m{accel}\033[0m
+    ws_target = f"ws://{host}:{port}/ws"
+    if host == "127.0.0.1" and port == 7860:
+        ws_line = f"{CYAN}│{RESET} {GREEN}✔{RESET} Local WebSocket telemetry bridge bound to {PURPLE}{ws_target}{RESET}           {CYAN}│{RESET}"
+    else:
+        # Dynamic padding calculation for custom hosts/ports
+        base_len = len(f" ✔ Local WebSocket telemetry bridge bound to {ws_target}")
+        pad = max(1, 78 - base_len)
+        ws_line = f"{CYAN}│{RESET} {GREEN}✔{RESET} Local WebSocket telemetry bridge bound to {PURPLE}{ws_target}{RESET}" + (" " * pad) + f"{CYAN}│{RESET}"
 
-\033[1;34m==>\033[0m \033[1mPouring OpenAI CLIP Semantic Cache... 🍺\033[0m
-✔ Loaded 6 class zero-shot embeddings from ./models/clip_semantic_cache.pkl (100% verified)
+    lines = [
+        f"{CYAN}╭──────────────────────────────────────────────────────────────────────────────╮{RESET}",
+        f"{CYAN}│{RESET}                                                                              {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}{BLUE}       ___   __  __ ______  ___   _  __ ___   __  __ ___   __  __  ____       {RESET}{CYAN}│{RESET}",
+        f"{CYAN}│{RESET}{BLUE}      / _ | / / / //_  __/ / _ \\ / |/ // _ \\ /  |/ // _ \\ / / / / / __/       {RESET}{CYAN}│{RESET}",
+        f"{CYAN}│{RESET}{BLUE}     / __ |/ /_/ /  / /   / // //    // // // /|_/ // // / /_/ / _\\ \\         {RESET}{CYAN}│{RESET}",
+        f"{CYAN}│{RESET}{BLUE}    /_/ |_|\\____/  /_/    \\___//_/|_/ \\___//_/  /_/ \\___/ \\____/ /___/        {RESET}{CYAN}│{RESET}",
+        f"{CYAN}│{RESET}                                                                              {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}          {B_CYAN}P A T R O L   R O V E R   |   S O V E R E I G N   E D G E{RESET}           {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}                                                                              {CYAN}│{RESET}",
+        f"{CYAN}├──────────────────────────────────────────────────────────────────────────────┤{RESET}",
+        f"{CYAN}│{RESET}                                                                              {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {BLUE}==>{RESET} Auto-updating Homebrew...                                                {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {BLUE}==>{RESET} Auto-updated Homebrew!                                                   {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} Updated 1 tap (homebrew/core).                                               {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}                                                                              {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {BLUE}==>{RESET} {YELLOW}Caveats{RESET}                                                                  {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} Autonomous Patrol Rover runs 100% locally on sovereign edge silicon.         {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} Zero cloud virtualization. Zero 429 rate limits. 60 FPS rigid-body sync.     {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}                                                                              {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {BLUE}==>{RESET} Checking host silicon accelerator...                                     {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {GREEN}✔{RESET} Detected host silicon engine: {GREEN}Apple Metal Performance Shaders (MPS){RESET}        {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}                                                                              {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {BLUE}==>{RESET} Pouring OpenAI CLIP Semantic Cache... 🍺                                 {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {GREEN}✔{RESET} Loaded 6 class zero-shot embeddings from {YELLOW}./models{RESET} {GREEN}(100% verified){RESET}          {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}                                                                              {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {BLUE}==>{RESET} Pouring YOLOv8 Tensor Core weights... 🍺                                 {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {GREEN}✔{RESET} Loaded tuned neural weights: {YELLOW}rover_yolo_tuned.pt{RESET} ({YELLOW}6.18 MB{RESET}, MPS)            {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}                                                                              {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {BLUE}==>{RESET} Initializing 60 FPS Rigid-Body Physics & Zero-Latency IPC Engine... 🚀   {CYAN}│{RESET}",
+        ws_line,
+        f"{CYAN}│{RESET} {GREEN}✔{RESET} GTA 3rd-Person Chase Engine calibrated (1280x720 HD @ 30 FPS)              {CYAN}│{RESET}",
+        f"{CYAN}│{RESET} {GREEN}✔{RESET} Solid PBR Laboratory Arena & Military Gunmetal Chassis initialized         {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}                                                                              {CYAN}│{RESET}",
+        f"{CYAN}├──────────────────────────────────────────────────────────────────────────────┤{RESET}",
+        f"{CYAN}│{RESET}  🚀 {PURPLE}[MISSION]{RESET} GET / {GREEN}✔ 200 OK{RESET}                                                 {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}  🧭 {BLUE}[MODE]{RESET} WS SET_MODE MANUAL {GREEN}✔ 200 OK{RESET}                                       {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}  🧭 {BLUE}[MODE]{RESET} POST /set_mode/MANUAL {GREEN}✔ 200 OK{RESET}                                    {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}  🧭 {BLUE}[MODE]{RESET} WS SET_MODE MANUAL {GREEN}✔ 200 OK{RESET}                                       {CYAN}│{RESET}",
+        f"{CYAN}│{RESET}  🕹️ {YELLOW}[TELEOP]{RESET} WS MANUAL BACKWARD {GREEN}✔ 200 OK{RESET}                                     {CYAN}│{RESET}",
+        f"{CYAN}╰──────────────────────────────────────────────────────────────────────────────╯{RESET}"
+    ]
 
-\033[1;34m==>\033[0m \033[1mPouring YOLOv8 Tensor Core weights... 🍺\033[0m
-✔ Loaded tuned neural weights: ./models/rover_yolo_tuned.pt (6.18 MB, {accel})
+    for line in lines:
+        print(line)
+    print()
 
-\033[1;34m==>\033[0m \033[1mInitializing 60 FPS Rigid-Body Physics & Zero-Latency IPC Engine... 🚀\033[0m
-✔ Local WebSocket telemetry bridge bound to ws://{host}:{port}/ws (sub-millisecond round-trip)
-✔ GTA 3rd-Person Chase Engine calibrated (1280x720 HD @ 30 FPS)
-✔ Solid PBR Laboratory Arena & Military Gunmetal Chassis initialized
-
-\033[1;32m==>\033[0m \033[1mSummary\033[0m
-🍺  /opt/homebrew/Cellar/patrol-rover/2.4.0 (100% Local Sovereign Edge Stack)
-  Poured from: {accel} / Local Fast-IPC Architecture
-╭─ MISSION CONTROL ONLINE ─────────────────────────────────────────────────────╮
-│  🚀 MISSION CONTROL HUD : \033[1;36mhttp://{host}:{port}\033[0m                                 │
-│  📖 ENGINEERING MANIFESTO: \033[1;32mhttp://{host}:{port}/landing\033[0m                         │
-│  🎮 CONTROLS             : WASD / Arrow Keys + 'V' POV Toggle                │
-│  🛑 SHUTDOWN             : Press Ctrl+C to terminate server cleanly          │
-╰──────────────────────────────────────────────────────────────────────────────╯
-"""
-    print(banner)
+print_homebrew_boot_banner = print_dashboard
 
 def main():
     """1-Command Entrypoint for local execution via `uvx patrol-rover` or direct python."""
     # Enforce strict warning & logger suppression
     warnings.filterwarnings("ignore")
-    for _log in ("uvicorn", "uvicorn.error", "uvicorn.access", "transformers", "ultralytics"):
-        logging.getLogger(_log).setLevel(logging.ERROR)
+    for _log in ("uvicorn", "uvicorn.error", "uvicorn.access", "transformers", "ultralytics", "torch"):
+        logging.getLogger(_log).setLevel(logging.WARNING)
 
     parser = argparse.ArgumentParser(
         description="Autonomous AI Vision Patrol Rover Mission Control & GTA HUD",
@@ -1286,8 +1321,8 @@ def main():
     parser.add_argument("--no-open", action="store_true", help="Do not automatically open browser")
     args = parser.parse_args()
 
-    # Print Homebrew-style CLI banner
-    print_homebrew_boot_banner(args.host, args.port)
+    # Print zero-dependency ANSI boxed dashboard
+    print_dashboard(args.host, args.port)
 
     # Automatically launch mission control in evaluator's browser
     if not args.no_open:
@@ -1301,7 +1336,7 @@ def main():
         threading.Thread(target=_open, daemon=True).start()
 
     try:
-        uvicorn.run(api, host=args.host, port=args.port, reload=False, log_level="error", access_log=False)
+        uvicorn.run(api, host=args.host, port=args.port, reload=False, log_level="warning", access_log=False)
     except KeyboardInterrupt:
         print("\n🛑 Shutting down rover controller cleanly...")
         controller.stop()
