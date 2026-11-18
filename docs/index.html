@@ -105,6 +105,187 @@
       z-index: 0;
     }
 
+    /* ─────────────────────────────────────────────────────────────────────────────
+       Part 10: Foggy Glassmorphism, Luminous Horizontal Seam & Full-Page Bloom
+       ───────────────────────────────────────────────────────────────────────────── */
+
+    /* Full-width container wrapping everything below Hero */
+    .manifesto-fog-shell {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      border-top: 1px solid rgba(120, 148, 255, 0.28);
+    }
+
+    /* Crisp, glowing top boundary seam with bright white-blue central peak at 50% */
+    .manifesto-fog-shell::before {
+      content: "";
+      position: absolute;
+      top: -1px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(120, 148, 255, 0.08) 15%,
+        rgba(160, 190, 255, 0.4) 34%,
+        rgba(220, 232, 255, 0.95) 50%,
+        rgba(160, 190, 255, 0.4) 66%,
+        rgba(120, 148, 255, 0.08) 85%,
+        transparent 100%
+      );
+      box-shadow: 0 0 12px rgba(180, 210, 255, 0.6), 0 0 24px rgba(56, 71, 255, 0.4);
+      pointer-events: none;
+      z-index: 20;
+    }
+
+    /* Downward bounce bloom diffusing beam light into foggy glass surface below */
+    .manifesto-fog-shell::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 180px;
+      background: radial-gradient(ellipse 55% 100% at 50% 0%, rgba(56, 71, 255, 0.35), transparent 75%);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* Dedicated Background Bloom Layer spanning entire lower page height below footer */
+    .manifesto-bloom-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .manifesto-bloom {
+      position: absolute;
+      border-radius: 50%;
+      pointer-events: none;
+      will-change: opacity;
+    }
+
+    /* 4–5 large, soft, overlapping CSS radial-gradient light orbs in #3847ff, #4f46e5, #1d4ed8 at 12%–22% */
+    .manifesto-bloom--telemetry {
+      top: 5%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 980px;
+      height: 680px;
+      background: radial-gradient(ellipse at center, rgba(56, 71, 255, 0.22) 0%, rgba(56, 71, 255, 0.08) 46%, transparent 70%);
+      animation: fogBreathA 10s ease-in-out infinite alternate;
+    }
+
+    .manifesto-bloom--folder {
+      top: 28%;
+      left: 46%;
+      transform: translateX(-50%);
+      width: 920px;
+      height: 720px;
+      background: radial-gradient(ellipse at center, rgba(79, 70, 229, 0.20) 0%, rgba(79, 70, 229, 0.07) 50%, transparent 72%);
+      animation: fogBreathB 12s ease-in-out infinite alternate;
+    }
+
+    .manifesto-bloom--sim {
+      top: 52%;
+      left: 54%;
+      transform: translateX(-50%);
+      width: 960px;
+      height: 680px;
+      background: radial-gradient(ellipse at center, rgba(29, 78, 216, 0.22) 0%, rgba(29, 78, 216, 0.08) 48%, transparent 70%);
+      animation: fogBreathC 9s ease-in-out infinite alternate;
+    }
+
+    .manifesto-bloom--runbook {
+      top: 74%;
+      left: 48%;
+      transform: translateX(-50%);
+      width: 920px;
+      height: 660px;
+      background: radial-gradient(ellipse at center, rgba(56, 71, 255, 0.18) 0%, rgba(56, 71, 255, 0.06) 50%, transparent 70%);
+      animation: fogBreathA 11s ease-in-out infinite alternate;
+    }
+
+    .manifesto-bloom--footer {
+      bottom: -100px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1060px;
+      height: 560px;
+      background: radial-gradient(ellipse at center, rgba(79, 70, 229, 0.22) 0%, rgba(56, 71, 255, 0.12) 45%, transparent 75%);
+      animation: fogBreathB 13s ease-in-out infinite alternate;
+    }
+
+    /* Slow, subtle GPU-only breathing animation */
+    @keyframes fogBreathA {
+      0% { opacity: 0.68; }
+      100% { opacity: 1.0; }
+    }
+
+    @keyframes fogBreathB {
+      0% { opacity: 0.65; }
+      100% { opacity: 0.95; }
+    }
+
+    @keyframes fogBreathC {
+      0% { opacity: 0.72; }
+      100% { opacity: 1.0; }
+    }
+
+    /* Frosted atmospheric overlay between bloom layer and content */
+    .manifesto-fog-content {
+      position: relative;
+      z-index: 10;
+      width: 100%;
+      background: rgba(13, 12, 20, 0.58);
+      backdrop-filter: blur(28px) saturate(135%);
+      -webkit-backdrop-filter: blur(28px) saturate(135%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-bottom: 2.5rem;
+    }
+
+    /* Foggy Glassmorphic Cards (Stat cards, 4K frames, MacWindows, CTAs) */
+    .foggy-glass-card {
+      background: rgba(20, 18, 30, 0.48) !important;
+      backdrop-filter: blur(18px) saturate(130%) !important;
+      -webkit-backdrop-filter: blur(18px) saturate(130%) !important;
+      border: 1px solid rgba(255, 255, 255, 0.08) !important;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 16px 40px rgba(0, 0, 0, 0.45) !important;
+    }
+
+    /* Folder Glow Backdrop */
+    .folder-glow-backdrop {
+      position: relative;
+    }
+    .folder-glow-backdrop::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 520px;
+      height: 360px;
+      background: radial-gradient(ellipse at center, rgba(56, 71, 255, 0.16) 0%, rgba(79, 70, 229, 0.05) 55%, transparent 75%);
+      pointer-events: none;
+      z-index: 0;
+      border-radius: 50%;
+    }
+
+    /* Crisp Typography Contrast Rules */
+    .manifesto-fog-shell h2,
+    .manifesto-fog-shell h3 {
+      color: #f4f4f8;
+    }
+    .manifesto-fog-shell p:not(.font-mono) {
+      color: #b8b6c4;
+    }
+
     /* Subtle CRT Scanline Vignette */
     body::before {
       content: "";
@@ -1443,20 +1624,23 @@ const LaserFlow = React.memo(({
         innerClassName = "",
         isTerminal = false,
         badge = null,
+        variant = "foggy",
         ...props
       } = allProps;
       return (
         <div
           ref={ref}
           {...props}
-          className={`rounded-2xl shadow-2xl border border-white/10 overflow-hidden text-left ambient-card-glow transition-all duration-300 ${
-            isTerminal
-              ? "bg-[#0a0a0c] bg-opacity-95 backdrop-blur-xl"
-              : "bg-[#141416] bg-opacity-95 backdrop-blur-xl"
+          className={`rounded-2xl overflow-hidden text-left ambient-card-glow transition-all duration-300 ${
+            variant === "foggy"
+              ? "foggy-glass-card"
+              : isTerminal
+              ? "bg-[#0a0a0c] bg-opacity-95 backdrop-blur-xl border border-white/10 shadow-2xl"
+              : "bg-[#141416] bg-opacity-95 backdrop-blur-xl border border-white/10 shadow-2xl"
           } ${className}`}
         >
           {/* macOS Title Bar */}
-          <div className="h-8 bg-[#1f1f23]/90 border-b border-white/[0.08] flex items-center justify-between px-3.5 relative select-none">
+          <div className="h-8 bg-[#1f1f23]/60 border-b border-white/[0.08] flex items-center justify-between px-3.5 relative select-none">
             {/* Traffic Light Buttons */}
             <div className="flex items-center space-x-2 z-10">
               <div className="w-3 h-3 rounded-full bg-[#ff5f56] border border-[#e0443e]/40 shadow-sm cursor-pointer hover:opacity-80 transition"></div>
@@ -1667,10 +1851,10 @@ const LaserFlow = React.memo(({
     // ─────────────────────────────────────────────────────────────────────────────
     function MediaBreakout({ title, caption, badge, children, className = "" }) {
       return (
-        <div className={`w-full rounded-2xl border border-white/10 bg-[#121215]/95 backdrop-blur-xl shadow-2xl overflow-hidden ambient-card-glow transition-all duration-300 ${className}`}>
+        <div className={`w-full rounded-2xl foggy-glass-card overflow-hidden ambient-card-glow transition-all duration-300 ${className}`}>
           {/* Subtle Clean Header */}
           {title && (
-            <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between text-xs font-sans text-slate-200 font-semibold tracking-wide">
+            <div className="px-5 py-3.5 border-b border-white/[0.06] bg-[#141218]/50 flex items-center justify-between text-xs font-sans text-slate-200 font-semibold tracking-wide">
               <span>{title}</span>
               {badge && (
                 <span className="text-[11px] font-mono text-slate-400 font-normal px-2 py-0.5 rounded bg-white/5 border border-white/5">
@@ -1685,7 +1869,7 @@ const LaserFlow = React.memo(({
           </div>
           {/* Clean Human Caption */}
           {caption && (
-            <div className="px-5 py-3 border-t border-white/[0.06] bg-black/25 text-xs sm:text-sm text-slate-400 font-sans leading-relaxed">
+            <div className="px-5 py-3 border-t border-white/[0.06] bg-black/20 text-xs sm:text-sm text-slate-400 font-sans leading-relaxed">
               {caption}
             </div>
           )}
@@ -4025,8 +4209,20 @@ const Folder = ({
             </div>
           </section>
 
-          {/* ── LOWER CONTENT SECTIONS (Stages 1 to 5) Inside max-w-4xl Column ── */}
-          <div className="w-full max-w-4xl z-10 relative flex flex-col gap-14 my-8 px-4 sm:px-8">
+          {/* ── LOWER CONTENT WRAPPER WITH FOGGY GLASSMORPHISM & LUMINOUS HORIZONTAL SEAM ── */}
+          <div className="manifesto-fog-shell relative w-full overflow-hidden">
+            {/* Full-Page Dedicated Background Bloom Layer */}
+            <div className="manifesto-bloom-layer" aria-hidden="true">
+              <div className="manifesto-bloom manifesto-bloom--telemetry" />
+              <div className="manifesto-bloom manifesto-bloom--folder" />
+              <div className="manifesto-bloom manifesto-bloom--sim" />
+              <div className="manifesto-bloom manifesto-bloom--runbook" />
+              <div className="manifesto-bloom manifesto-bloom--footer" />
+            </div>
+
+            {/* Frosted Atmospheric Content Overlay */}
+            <div className="manifesto-fog-content relative z-10 w-full flex flex-col items-center">
+              <div className="w-full max-w-4xl z-10 relative flex flex-col gap-14 my-8 px-4 sm:px-8">
 
             {/* ── STAGE 1: MODEL PERFORMANCE & TELEMETRY + SPATIAL CORTEX ── */}
             {stage >= 1 && (
@@ -4061,25 +4257,25 @@ const Folder = ({
 
                 {/* 4-Stat Metric Grid */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-                  <div className="p-4 rounded-xl border border-white/10 bg-[#0d0d0f]/90">
+                  <div className="p-4 rounded-xl foggy-glass-card">
                     <div className="text-xs text-slate-400 font-mono">mAP@0.5 (All Hazards)</div>
                     <div className="text-2xl sm:text-3xl font-bold text-[#00ff9d] font-mono mt-1">94.2%</div>
-                    <div className="text-[11px] text-slate-500 font-sans mt-0.5">+18.4% over baseline COCO</div>
+                    <div className="text-[11px] text-slate-400 font-sans mt-0.5">+18.4% over baseline COCO</div>
                   </div>
-                  <div className="p-4 rounded-xl border border-white/10 bg-[#0d0d0f]/90">
+                  <div className="p-4 rounded-xl foggy-glass-card">
                     <div className="text-xs text-slate-400 font-mono">Edge MPS Latency</div>
                     <div className="text-2xl sm:text-3xl font-bold text-cyan-400 font-mono mt-1">3.2 ms</div>
-                    <div className="text-[11px] text-slate-500 font-sans mt-0.5">312 FPS peak throughput</div>
+                    <div className="text-[11px] text-slate-400 font-sans mt-0.5">312 FPS peak throughput</div>
                   </div>
-                  <div className="p-4 rounded-xl border border-white/10 bg-[#0d0d0f]/90">
+                  <div className="p-4 rounded-xl foggy-glass-card">
                     <div className="text-xs text-slate-400 font-mono">Precision (Class Peak)</div>
                     <div className="text-2xl sm:text-3xl font-bold text-sky-400 font-mono mt-1">91.8%</div>
-                    <div className="text-[11px] text-slate-500 font-sans mt-0.5">Low false-positive rate</div>
+                    <div className="text-[11px] text-slate-400 font-sans mt-0.5">Low false-positive rate</div>
                   </div>
-                  <div className="p-4 rounded-xl border border-white/10 bg-[#0d0d0f]/90">
+                  <div className="p-4 rounded-xl foggy-glass-card">
                     <div className="text-xs text-slate-400 font-mono">Recall (Class Peak)</div>
                     <div className="text-2xl sm:text-3xl font-bold text-purple-400 font-mono mt-1">88.4%</div>
-                    <div className="text-[11px] text-slate-500 font-sans mt-0.5">Zero missed critical hazards</div>
+                    <div className="text-[11px] text-slate-400 font-sans mt-0.5">Zero missed critical hazards</div>
                   </div>
                 </div>
 
@@ -4091,7 +4287,7 @@ const Folder = ({
                     caption="High-resolution Precision-Recall curves showing rapid mAP@0.5 convergence across all 6 hazard classes over 29 fine-tuning epochs on NVIDIA T4 GPU."
                   >
                     <div
-                      className="group relative rounded-xl overflow-hidden border border-white/10 bg-[#070709] cursor-zoom-in transition-all duration-300 hover:border-cyan-500/50 hover:shadow-[0_0_30px_rgba(0,229,255,0.15)]"
+                      className="group relative rounded-xl overflow-hidden cursor-zoom-in transition-all duration-300 hover:border-cyan-500/50 hover:shadow-[0_0_30px_rgba(0,229,255,0.15)] foggy-glass-card"
                       onClick={() => openLightbox({
                         src: "./media/PR_curve.png",
                         fallback: "./media/yolo_metrics.png",
@@ -4125,7 +4321,7 @@ const Folder = ({
                     caption="Validation batch predictions demonstrating tight bounding box regression, 99.5% accuracy on traffic cones and chairs, and real-to-sim spatial generalization."
                   >
                     <div
-                      className="group relative rounded-xl overflow-hidden border border-white/10 bg-[#070709] cursor-zoom-in transition-all duration-300 hover:border-cyan-500/50 hover:shadow-[0_0_30px_rgba(0,229,255,0.15)]"
+                      className="group relative rounded-xl overflow-hidden cursor-zoom-in transition-all duration-300 hover:border-cyan-500/50 hover:shadow-[0_0_30px_rgba(0,229,255,0.15)] foggy-glass-card"
                       onClick={() => openLightbox({
                         src: "./media/val_batch0_pred.jpg",
                         fallback: "./media/yolo_vision.png",
@@ -4205,7 +4401,7 @@ const Folder = ({
                 </div>
 
                 {/* Centered Interactive Folder A */}
-                <div id="folder-arch-container" className="w-full py-6 sm:py-10 flex flex-col items-center justify-center relative min-h-[340px]">
+                <div id="folder-arch-container" className="w-full py-6 sm:py-10 flex flex-col items-center justify-center relative min-h-[340px] folder-glow-backdrop">
                   <Folder
                     label="Architecture"
                     mode="flap"
@@ -4253,7 +4449,7 @@ const Folder = ({
                       caption: "Live semantic target matching comparing visual crops against arbitrary text queries in embedding space."
                     })}
                   >
-                    <div className="rounded-xl overflow-hidden border border-white/10 aspect-video bg-[#070709] flex items-center justify-center transition-all duration-300 group-hover:border-purple-500/50 group-hover:shadow-[0_0_20px_rgba(168,85,247,0.15)]">
+                    <div className="rounded-xl overflow-hidden aspect-video flex items-center justify-center transition-all duration-300 group-hover:border-purple-500/50 group-hover:shadow-[0_0_20px_rgba(168,85,247,0.15)] foggy-glass-card">
                       <img
                         src="./media/clip_reasoning.png"
                         alt="OpenAI CLIP Embedding Similarity"
@@ -4313,7 +4509,7 @@ const Folder = ({
                 </div>
 
                 {/* Centered Interactive Folder B (Glass Variant) */}
-                <div id="folder-data-container" className="w-full py-6 sm:py-10 flex flex-col items-center justify-center relative min-h-[340px]">
+                <div id="folder-data-container" className="w-full py-6 sm:py-10 flex flex-col items-center justify-center relative min-h-[340px] folder-glow-backdrop">
                   <Folder
                     label="Training Data"
                     mode="flap"
@@ -4400,7 +4596,7 @@ const Folder = ({
                   badge="60 FPS MPS"
                   caption="Real-time rigid-body dynamics computed in Webots with differential drive kinematics, live LiDAR raycasting, and Apple Silicon MPS neural rendering."
                 >
-                  <div className="rounded-xl overflow-hidden border border-white/10 aspect-video bg-black flex items-center justify-center">
+                  <div className="rounded-xl overflow-hidden aspect-video flex items-center justify-center foggy-glass-card">
                     <video
                       controls
                       autoPlay
@@ -4491,19 +4687,19 @@ const Folder = ({
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 text-center font-mono">
-                      <div className="p-2 rounded bg-black/40 border border-white/5">
+                      <div className="p-2 rounded bg-black/30 border border-white/10 backdrop-blur-md">
                         <div className="text-slate-400 text-[10px]">Cloud APIs</div>
                         <div className="text-[#22c55e] font-bold text-sm">ZERO</div>
                       </div>
-                      <div className="p-2 rounded bg-black/40 border border-white/5">
+                      <div className="p-2 rounded bg-black/30 border border-white/10 backdrop-blur-md">
                         <div className="text-slate-400 text-[10px]">YOLOv8 Infer</div>
                         <div className="text-[#38bdf8] font-bold text-sm">3.2 ms</div>
                       </div>
-                      <div className="p-2 rounded bg-black/40 border border-white/5">
+                      <div className="p-2 rounded bg-black/30 border border-white/10 backdrop-blur-md">
                         <div className="text-slate-400 text-[10px]">CLIP Cosine</div>
                         <div className="text-[#a855f7] font-bold text-sm">12.4 ms</div>
                       </div>
-                      <div className="p-2 rounded bg-black/40 border border-white/5">
+                      <div className="p-2 rounded bg-black/30 border border-white/10 backdrop-blur-md">
                         <div className="text-slate-400 text-[10px]">Physics Loop</div>
                         <div className="text-[#eab308] font-bold text-sm">60.2 FPS</div>
                       </div>
@@ -4514,7 +4710,7 @@ const Folder = ({
                 {/* The Hub & Repository Launch Card */}
                 <div
                   id="card-stage-5"
-                  className="w-full rounded-2xl border border-white/10 bg-[#121215]/95 backdrop-blur-xl shadow-2xl p-8 sm:p-10 text-center z-10 ambient-card-glow"
+                  className="w-full rounded-2xl foggy-glass-card p-8 sm:p-10 text-center z-10 ambient-card-glow"
                 >
                   <h3 className="text-3xl sm:text-4xl font-bold text-white mb-4 font-sans tracking-tight">
                     Ready to run locally.
@@ -4561,6 +4757,8 @@ const Folder = ({
               </a>
             </footer>
 
+              </div>
+            </div>
           </div>
 
           {/* Interactive 4K Lightbox Modal */}
