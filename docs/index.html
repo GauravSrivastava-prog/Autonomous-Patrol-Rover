@@ -62,31 +62,29 @@
       height: 100%;
     }
 
-    /* ── Full-Viewport BeamBackground & Dynamic Tracking Proxy Styling ── */
-    .beam-background {
-      position: fixed;
-      inset: 0;
-      width: 100vw;
-      height: 100vh;
-      pointer-events: none;
-      z-index: 0;
-      overflow: hidden;
-    }
-
-    .beam-proxy-surface {
-      position: fixed;
-      pointer-events: none;
-      opacity: 0;
-      z-index: 0;
-    }
-
+        /* ── Hero LaserFlow Canvas & Fallback Styling (Bounded to Hero Only) ── */
     .laser-hero__fallback {
-      position: fixed;
+      position: absolute;
       inset: 0;
       background:
-        linear-gradient(90deg, transparent calc(65% - 4px), #fff 65%, transparent calc(65% + 4px)),
-        radial-gradient(ellipse 45% 100% at 65% 50%, rgba(56, 71, 255, 0.45), transparent 70%);
+        linear-gradient(90deg, transparent calc(50% - 4px), #fff 50%, transparent calc(50% + 4px)),
+        radial-gradient(ellipse 45% 100% at 50% 50%, rgba(56, 71, 255, 0.45), transparent 70%);
       pointer-events: none;
+    }
+
+    /* Ambient GPU-Friendly CSS Card Glow (Zero JS / Zero WebGL Cost) */
+    .ambient-card-glow {
+      position: relative;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.7), 0 0 35px -5px rgba(56, 71, 255, 0.12);
+    }
+    .ambient-card-glow::before {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      background: radial-gradient(circle at 50% 0%, rgba(56, 71, 255, 0.12), transparent 70%);
+      pointer-events: none;
+      z-index: 0;
     }
 
     /* Subtle CRT Scanline Vignette */
@@ -640,19 +638,7 @@ void main() {
   float sr = uSurface.z / uScale;
   float sb = uSurface.w / uScale;
   float radius = uRadius / uScale;
-
-  // ── Phase 3: Organic Tree-Branch Wandering & Tendril Pathing ──
-  float wanderFreq1 = p.y * 0.016 + t * 0.7;
-  float wanderFreq2 = p.y * 0.041 - t * 1.1;
-  float wanderFreq3 = p.y * 0.085 + t * 1.8;
-  float wanderNoise = noise(vec2(p.y * 0.028, t * 0.45)) - 0.5;
-  float treeBranch = sin(wanderFreq1) * 7.5 + sin(wanderFreq2) * 4.2 + sin(wanderFreq3) * 2.0 + wanderNoise * 8.5;
-
-  // Smoothly blend wandering back to dead center right before landing on the surface
-  float wanderBlend = smoothstep(0.0, 75.0, sy - p.y);
-  float organicBx = bx + treeBranch * wanderBlend;
-
-  float dx = p.x - organicBx;
+  float dx = p.x - bx;
   float adx = abs(dx);
   float h = sy - p.y;
   float hp = max(h, 0.0);
@@ -695,14 +681,6 @@ void main() {
   float head = exp(-sq((p.y - front) / 24.0)) * falling;
   col += mix(WHITE, BEAM, 0.35) * head * (7.0 * exp(-adx / (2.6 * beamWidth)) + 1.0 * exp(-adx / (14.0 * beamWidth)));
 
-  // Secondary organic branch tendril splitting off the main trunk
-  float branchPhase = p.y * 0.022 + t * 0.55;
-  float branchSide = sin(branchPhase) > 0.0 ? 1.0 : -1.0;
-  float branchDist = 22.0 * smoothstep(40.0, 260.0, p.y) * wanderBlend;
-  float branchDx = p.x - (bx + (treeBranch + branchSide * branchDist) * wanderBlend);
-  float branchTendril = 5.2 * exp(-abs(branchDx) / (1.2 * beamWidth)) * smoothstep(0.28, 0.85, noise(vec2(p.y * 0.045, t * 0.65)));
-  col += mix(CYAN, WHITE, 0.5) * branchTendril * top * above * drop * 0.75;
-
   float psi = adx * (outline + 1.0);
   float rise = max(hp - 17.9 * flare, 0.0);
   float skirtAmp = 16.6 * (exp(-sq(rise / (11.8 * flare))) + 0.3 * exp(-rise / (60.0 * flare)));
@@ -740,17 +718,16 @@ void main() {
   float edgeGlow = 22.8 * exp(-sq(adx / (150.0 * uShape.z))) * edgeMask * (1.0 + 0.9 * bead);
   float onTop = 1.0 - smoothstep(sy + radius, sy + radius + 10.0, p.y);
   float edgeLine = (exp(-sq(max(sd, 0.0) / 0.9)) + 0.12 * exp(-max(sd, 0.0) / 3.0)) * edgeGlow * onTop;
-  col += mix(sideK, WHITE, 0.6) * edgeLine * min(bloom, 1.0) * smoothstep(0.01, 0.2, uShape.w);
+  col += mix(sideK, WHITE, 0.6) * edgeLine * min(bloom, 1.0);
 
-  // ── Phase 3: Symmetric Encircling Spill & Waterfall Math ──
-  float pour = max(uShape.w, 1.2);
-  float spanHalf = max(sr - sl, 200.0) * 0.5;
-  float strengthR = clamp(1.3 * exp(-sq(max(reachR - spanHalf * 0.72, 0.0) / (175.0 * uShape.z))), 0.45, 1.85) * pour;
-  float strengthL = clamp(1.3 * exp(-sq(max(reachL - spanHalf * 0.72, 0.0) / (175.0 * uShape.z))), 0.45, 1.85) * pour;
+  float pour = uShape.w;
+  float baseline = exp(-sq(130.0 / 150.0));
+  float strengthR = exp(-sq(reachR / (150.0 * uShape.z))) * (1.0 - smoothstep(0.8 * spread, 1.25 * spread, reachR)) / baseline * pour;
+  float strengthL = exp(-sq(reachL / (150.0 * uShape.z))) * (1.0 - smoothstep(0.8 * spread, 1.25 * spread, reachL)) / baseline * pour;
   float fallY = p.y - sy - 0.3 * radius;
   float rightHalf = smoothstep(center.x - 4.0, center.x + 4.0, p.x);
-  float haloR = exp(-length(p - vec2(sr - 0.3 * radius, sy + 0.3 * radius)) / 42.0) * sqrt(strengthR);
-  float haloL = exp(-length(p - vec2(sl + 0.3 * radius, sy + 0.3 * radius)) / 42.0) * sqrt(strengthL);
+  float haloR = exp(-length(p - vec2(sr - 0.3 * radius, sy + 0.3 * radius)) / 40.0) * sqrt(strengthR);
+  float haloL = exp(-length(p - vec2(sl + 0.3 * radius, sy + 0.3 * radius)) / 40.0) * sqrt(strengthL);
   vec3 glowR;
   vec3 glowL;
   col += spill(sd, fallY, strengthR, uPour.y, t, glowR) * rightHalf;
@@ -758,13 +735,9 @@ void main() {
   col += easeLight(glowR * rightHalf + NAVY * 0.9 * haloR, uPour.w);
   col += easeLight(glowL * (1.0 - rightHalf) + NAVY * 0.9 * haloL, uPour.z);
 
-  // ── Phase 4: Global Mouse Hover / Lens Effect Decoupled from Beam Mask ──
   vec2 toLens = frag - uLens.xy;
   float lens = exp(-dot(toLens, toLens) / sq(uLens.z)) * uLens.w;
   col *= 1.0 + 0.35 * lens * hug;
-  // Ambient global lens illumination visible anywhere on viewport
-  col += mix(BEAM, CYAN, 0.4) * lens * 0.35;
-
   float fogAmount = uAmount.y * uAtmosphere;
   float near = exp(-adx / 150.0);
   float envelope = near * (0.3 + 0.4 * exp(-hp / 50.0) + 1.2 * exp(-p.y / 120.0));
@@ -784,7 +757,6 @@ void main() {
     col += fog * fogAmount * (1.0 + 1.2 * lens) * mix(1.0, 0.45, uTheme);
   }
 
-  // Decoupled Background Reveal (Visible Anywhere Cursor Moves)
   if (uRevealInfo.y > 0.001 && uLens.w > 0.002) {
     vec2 toReveal = frag - uLens.xy;
     float reveal = exp(-dot(toReveal, toReveal) / sq(uRevealInfo.x)) * uLens.w;
@@ -792,16 +764,14 @@ void main() {
     float onImage = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
     vec4 ui = texture(uReveal, uv);
     float ink = max(ui.r, max(ui.g, ui.b)) * onImage;
-    // Decoupled from beam light mask: lens provides its own ambient illumination everywhere on the screen
-    float lensAmbient = 0.9 + clamp(col.b * 0.7, 0.0, 1.2);
-    col += mix(BEAM, WHITE, 0.45) * ink * reveal * lensAmbient * uRevealInfo.y * 2.8;
+    float lit = clamp(col.b * 0.9, 0.0, 1.0) * (1.0 - smoothstep(0.9, 2.2, col.b));
+    float clearance = smoothstep(60.0 * sqrt(beamWidth), 150.0 * sqrt(beamWidth), adx);
+    col += mix(BEAM, WHITE, 0.4) * ink * reveal * lit * clearance * uRevealInfo.y * 2.2;
   }
 
   float haze = col.b;
   float dotGrid = 1.0 - smoothstep(0.16, 0.32, length(fract(frag / 3.0) - 0.5));
-  float gridPresence = clamp(haze + 0.65 * lens, 0.0, 1.5) * (1.0 - smoothstep(1.5, 4.0, haze));
-  col += BEAM * dotGrid * gridPresence * (0.18 + 0.5 * lens) * uExtra.y;
-
+  col += BEAM * dotGrid * clamp(haze, 0.0, 1.5) * (1.0 - smoothstep(1.5, 4.0, haze)) * (0.18 + 0.3 * lens) * uExtra.y;
   if (lens > 0.002) {
     vec2 drift = frag - vec2(0.0, t * 14.0);
     vec2 sparkCell = floor(drift / 7.0);
@@ -809,8 +779,7 @@ void main() {
     float sparkDist = length(drift - sparkPos);
     float sparkOn = step(0.8, hash(sparkCell + 8.8));
     float sparkTwinkle = 0.5 + 0.5 * sin(t * 5.0 + hash(sparkCell + 3.7) * 6.283);
-    float sparkHaze = max(clamp(haze * 1.5, 0.0, 1.0), 0.75);
-    col += WHITE * exp(-sparkDist * sparkDist / 0.35) * sparkOn * sparkTwinkle * lens * sparkHaze * 1.6 * uAmount.z;
+    col += WHITE * exp(-sparkDist * sparkDist / 0.35) * sparkOn * sparkTwinkle * lens * clamp(haze * 1.5, 0.0, 1.0) * 1.6 * uAmount.z;
   }
 
   float dustAmount = uAmount.z;
@@ -952,7 +921,7 @@ const locate = (gl, program, names) => {
   return result;
 };
 
-const LaserFlow = ({
+const LaserFlow = React.memo(({
   surfaceRef,
   beamPosition = 0.6,
   surfaceLevel = 1,
@@ -976,7 +945,6 @@ const LaserFlow = ({
   intro = true,
   theme = 'dark',
   paused = false,
-  folderMode = false,
   dpr,
   ...rest
 }) => {
@@ -1007,7 +975,6 @@ const LaserFlow = ({
     revealOpacity: clamp(revealOpacity, 0, 1),
     intro,
     theme,
-    folderMode,
     paused,
     dpr
   };
@@ -1225,39 +1192,11 @@ const LaserFlow = ({
           surface = { left: -width * 2, top: height, right: width * 3, bottom: height * 3, radius: 0, real: false };
         }
       }
-      // ── Scroll-Triggered Recoil & Slow Re-Drop Physics (1.5s–2.5s cycle) ──
-      let recoilOffset = 0;
-      if (state.recoiling) {
-        const now = performance.now() / 1000;
-        const elapsed = now - state.recoilStart;
-        const RECOIL_TOTAL = 2.0; // 2.0s slow re-drop cycle (within 1.5s–2.5s)
-        const JERK_PEAK_TIME = 0.22; // 220ms snappy upward tactile jerk
-
-        if (elapsed < RECOIL_TOTAL) {
-          wake(); // Keep rendering smoothly throughout the 2s cycle
-          const maxLift = 0.26 * height * (state.recoilStrength || 0.7); // ~200-260px recoil
-          if (elapsed < JERK_PEAK_TIME) {
-            // Snappy tactile upward jerk
-            const t = elapsed / JERK_PEAK_TIME;
-            recoilOffset = maxLift * Math.sin(t * Math.PI * 0.5);
-          } else {
-            // Slow graceful re-drop over the remaining 1.8s
-            const t = (elapsed - JERK_PEAK_TIME) / (RECOIL_TOTAL - JERK_PEAK_TIME);
-            const easeDrop = 1.0 - Math.pow(t, 1.4);
-            recoilOffset = maxLift * easeDrop;
-          }
-        } else {
-          state.recoiling = false;
-          state.recoilStrength = 0;
-        }
-      }
-
       const startY = -0.15 * height;
       const span = surface.top - startY + 0.3 * height;
       const it = state.introTime;
       const settled = it >= INTRO_END;
-      const baseFront = settled ? (surface.top + 0.3 * height) : (startY + span * Math.pow(clamp(it / INTRO_DROP, 0, 1), 1.3));
-      const front = baseFront - recoilOffset;
+      const front = settled ? surface.top + 0.3 * height : startY + span * Math.pow(clamp(it / INTRO_DROP, 0, 1), 1.3);
       const impact = INTRO_DROP * Math.pow(Math.max(0, surface.top - startY) / span, 1 / 1.3);
       const tau = it - impact;
       const bloom = settled ? 1 : tau <= 0 ? 0 : spring(tau);
@@ -1402,22 +1341,6 @@ const LaserFlow = ({
 
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(container);
-
-    let lastScrollY = window.scrollY;
-    const onScrollJerk = () => {
-      const currentScrollY = window.scrollY;
-      const delta = Math.abs(currentScrollY - lastScrollY);
-      lastScrollY = currentScrollY;
-
-      // Only recoil once settled past initial intro drop
-      if (state.introTime >= INTRO_END && delta > 3) {
-        state.recoiling = true;
-        state.recoilStart = performance.now() / 1000;
-        state.recoilStrength = Math.min(1.0, (state.recoilStrength || 0.4) + Math.min(0.6, delta / 120));
-        wake();
-      }
-    };
-    window.addEventListener('scroll', onScrollJerk, { passive: true });
     const intersection = new IntersectionObserver(entries => {
       visible = entries.some(entry => entry.isIntersecting);
       if (visible) {
@@ -1446,7 +1369,6 @@ const LaserFlow = ({
       wakeRef.current = null;
       resizeObserver.disconnect();
       intersection.disconnect();
-      window.removeEventListener('scroll', onScrollJerk);
       window.removeEventListener('pointermove', onPointerMove);
       document.documentElement.removeEventListener('pointerleave', onPointerLeave);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -1490,28 +1412,26 @@ const LaserFlow = ({
       <canvas ref={canvasRef} className="laser-flow-canvas" aria-hidden="true" />
     </div>
   );
-};
-
-
-
+});
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Reusable macOS Window Component (Glassmorphism & Traffic Light Titlebar)
     // ─────────────────────────────────────────────────────────────────────────────
-    const MacWindow = React.forwardRef(function MacWindow({
-      title = "Terminal",
-      children,
-      className = "",
-      innerClassName = "",
-      isTerminal = false,
-      badge = null,
-      ...props
-    }, ref) {
+    const MacWindow = React.forwardRef(function MacWindow(allProps, ref) {
+      const {
+        title = "Terminal",
+        children,
+        className = "",
+        innerClassName = "",
+        isTerminal = false,
+        badge = null,
+        ...props
+      } = allProps;
       return (
         <div
           ref={ref}
           {...props}
-          className={`rounded-2xl shadow-2xl border border-white/10 overflow-hidden text-left transition-all duration-300 ${
+          className={`rounded-2xl shadow-2xl border border-white/10 overflow-hidden text-left ambient-card-glow transition-all duration-300 ${
             isTerminal
               ? "bg-[#0a0a0c] bg-opacity-95 backdrop-blur-xl"
               : "bg-[#141416] bg-opacity-95 backdrop-blur-xl"
@@ -1729,7 +1649,7 @@ const LaserFlow = ({
     // ─────────────────────────────────────────────────────────────────────────────
     function MediaBreakout({ title, caption, badge, children, className = "" }) {
       return (
-        <div className={`w-full rounded-2xl border border-white/10 bg-[#121215]/95 backdrop-blur-xl shadow-2xl overflow-hidden transition-all duration-300 ${className}`}>
+        <div className={`w-full rounded-2xl border border-white/10 bg-[#121215]/95 backdrop-blur-xl shadow-2xl overflow-hidden ambient-card-glow transition-all duration-300 ${className}`}>
           {/* Subtle Clean Header */}
           {title && (
             <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between text-xs font-sans text-slate-200 font-semibold tracking-wide">
@@ -1755,72 +1675,6 @@ const LaserFlow = ({
       );
     }
 
-    const BeamBackground = React.memo(function BeamBackground({
-      proxyRef,
-      run,
-      webgl2 = true,
-      beamPosition = 0.5,
-      folderMode = false,
-      phone = false,
-      coarse = false,
-      reduced = false
-    }) {
-      return (
-        <div className="beam-background fixed inset-0 w-screen h-screen pointer-events-none z-0 overflow-hidden">
-          {webgl2 ? (
-            <LaserFlow
-              key={run}
-              surfaceRef={proxyRef}
-              beamPosition={0.5}
-              color="#3847ff"
-              intensity={folderMode ? 0.52 : (phone ? 1.4 : 1.8)}
-              beamWidth={folderMode ? 1.2 : (phone ? 1.2 : 1.5)}
-              flare={folderMode ? 0.35 : (phone ? 1.2 : 1.5)}
-              spread={folderMode ? 0.35 : (phone ? 1.2 : 1.5)}
-              spill={folderMode ? 0.0 : 1.0}
-              fog={folderMode ? 0.45 : (phone ? 0.1 : 0.2)}
-              dust={1.6}
-              streaks={1.5}
-              dots={1.0}
-              pulse={1.5}
-              speed={1.5}
-              seed={3}
-              mouseInteraction={!coarse}
-              revealImage="./laserflow-reveal.png"
-              revealRadius={220}
-              revealOpacity={0.6}
-              intro={!reduced}
-              theme="dark"
-              folderMode={folderMode}
-              dpr={phone ? 1.5 : undefined}
-            />
-          ) : (
-            <div className="laser-hero__fallback" aria-hidden="true" />
-          )}
-
-          {/* Invisible Tracking Proxy Surface in Viewport Coordinates */}
-          <div
-            id="laserflow-proxy-surface"
-            ref={proxyRef}
-            className="beam-proxy-surface"
-            style={{
-              position: "fixed",
-              pointerEvents: "none",
-              opacity: 0,
-              zIndex: 0
-            }}
-          />
-        </div>
-      );
-    });
-
-    // Main ManifestoApp Component (Progressive Stages & Laser Tracking)
-    // ─────────────────────────────────────────────────────────────────────────────
-    
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // React Bits <Folder /> Official Component (IIFE Scoped)
-    // ─────────────────────────────────────────────────────────────────────────────
     const Folder = (() => {
       const { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } = React;
       
@@ -3974,20 +3828,16 @@ const Folder = ({
       const [run, setRun] = useState(0);
       const [webgl2, setWebgl2] = useState(true);
       const [lightboxImage, setLightboxImage] = useState(null);
-      const [folderMode, setFolderMode] = useState(false);
       const [folderSize, setFolderSize] = useState(() => (typeof window !== "undefined" && window.innerWidth < 640 ? 1.0 : 1.25));
 
-      const proxyRef = useRef(null);
-      const cardRef0 = useRef(null); // Stage 0: Hero CLI (#card-hero)
-      const cardRef1 = useRef(null); // Stage 1: Telemetry + 4K Showcase + Inference (#card-stage-1)
-      const cardRef2 = useRef(null); // Stage 2: Folder A Architecture + CLIP Reasoning (#section-folder-architecture)
-      const cardRef3 = useRef(null); // Stage 3: Folder B Training Data + Dataset Pipeline (#section-folder-data)
-      const cardRef4 = useRef(null); // Stage 4: Webots Sim Videos + Sim Terminal (#card-stage-3)
-      const cardRef5 = useRef(null); // Stage 5: Local Runbook Terminal + Hub (#card-stage-4)
-      const cardRefFooter = useRef(null); // Footer (#footer-section)
-
-      const glidingUntilRef = useRef(0);
-      const glidingTargetStageRef = useRef(0);
+      const heroCardRef = useRef(null);
+      const cardRef0 = heroCardRef;
+      const cardRef1 = useRef(null);
+      const cardRef2 = useRef(null);
+      const cardRef3 = useRef(null);
+      const cardRef4 = useRef(null);
+      const cardRef5 = useRef(null);
+      const cardRefFooter = useRef(null);
 
       const phone = useMedia("(max-width: 639px)");
       const coarse = useMedia("(pointer: coarse)");
@@ -4000,7 +3850,7 @@ const Folder = ({
       }, []);
 
       const replay = useCallback(() => {
-        setRun((n) => n + 1);
+        setRun(n => n + 1);
       }, []);
 
       const openLightbox = useCallback((imgData) => {
@@ -4017,119 +3867,36 @@ const Folder = ({
         }
       }, []);
 
-      // ── Zero-Lerp 1:1 Scroll Sync & Smart Glow Mode Engine ──
-      useEffect(() => {
-        let rafId;
+      // ── Clean 'Y' / 'N' Transitions with Native Smooth Scroll (Zero JS Polling) ──
+      const advanceStage = (choice) => {
+        if (stage >= 5) return;
+        const nextStage = stage + 1;
+        setUserChoices(prev => ({ ...prev, [stage]: choice }));
+        setStage(nextStage);
 
-        const stageTargets = [cardRef0, cardRef1, cardRef2, cardRef3, cardRef4, cardRef5];
-
-        const syncProxy = () => {
-          const now = Date.now();
-          const isGliding = now < glidingUntilRef.current;
-          let target = null;
-
-          if (isGliding) {
-            const targetIndex = glidingTargetStageRef.current;
-            target = stageTargets[Math.min(targetIndex, stageTargets.length - 1)]?.current;
-          } else {
-            const allSections = [
-              cardRef0,
-              cardRef1,
-              cardRef2,
-              cardRef3,
-              cardRef4,
-              cardRef5,
-              cardRefFooter
-            ];
-
-            const viewportFocusY = window.innerHeight * 0.38;
-            let bestTarget = null;
-            let minDistance = Infinity;
-            let lastVisible = null;
-
-            for (const ref of allSections) {
-              const el = ref?.current;
-              if (!el) continue;
-              const r = el.getBoundingClientRect();
-              
-              if (r.bottom > 40 && r.top < window.innerHeight - 40) {
-                lastVisible = el;
-                const dist = Math.abs(r.top - viewportFocusY);
-                if (dist < minDistance) {
-                  minDistance = dist;
-                  bestTarget = el;
-                }
-              }
-            }
-            target = bestTarget || lastVisible || cardRef0.current;
+        setTimeout(() => {
+          const targetIds = [
+            'card-hero',
+            'section-telemetry',
+            'section-folder-architecture',
+            'section-training-provenance',
+            'section-simulation',
+            'section-runbook'
+          ];
+          const nextTarget = document.getElementById(targetIds[nextStage]);
+          if (nextTarget) {
+            nextTarget.scrollIntoView({ behavior: "smooth", block: "start" });
           }
-
-          if (proxyRef.current) {
-            const el = proxyRef.current;
-
-            if (target) {
-              const isFolder = target.id === 'section-folder-architecture' || 
-                               target.id === 'section-folder-data' || 
-                               !!target.querySelector('.folder-root');
-
-              setFolderMode(isFolder);
-
-              const rect = target.getBoundingClientRect();
-              const computed = window.getComputedStyle(target);
-              const radius = parseFloat(computed.borderTopLeftRadius) || parseFloat(computed.borderRadius) || 16;
-
-              if (isFolder) {
-                // Smart Ambient Radial Glow positioned centered behind the 3D folder
-                const folderEl = target.querySelector('.folder-root') || target;
-                const fRect = folderEl.getBoundingClientRect();
-                el.style.top = `${fRect.top + fRect.height * 0.25}px`;
-                el.style.left = `${fRect.left}px`;
-                el.style.width = `${fRect.width}px`;
-                el.style.height = `${fRect.height}px`;
-                el.style.borderTopLeftRadius = '9999px';
-                el.style.borderTopRightRadius = '9999px';
-              } else {
-                // Strict 1:1 physical card boundary lock
-                el.style.top = `${rect.top}px`;
-                el.style.left = `${rect.left}px`;
-                el.style.width = `${rect.width}px`;
-                el.style.height = `${rect.height}px`;
-                el.style.borderTopLeftRadius = `${radius}px`;
-                el.style.borderTopRightRadius = `${radius}px`;
-              }
-            } else {
-              // Default Resting State: Beam falls to the bottom of the current viewport
-              setFolderMode(false);
-              el.style.top = `${window.innerHeight * 0.98}px`;
-              el.style.left = `${window.innerWidth * 0.2}px`;
-              el.style.width = `${window.innerWidth * 0.6}px`;
-              el.style.height = '100px';
-              el.style.borderTopLeftRadius = '0px';
-              el.style.borderTopRightRadius = '0px';
-            }
-          }
-        };
-
-        const onFrame = () => {
-          syncProxy();
-          rafId = requestAnimationFrame(onFrame);
-        };
-
-        window.addEventListener("scroll", syncProxy, { passive: true });
-        window.addEventListener("resize", syncProxy, { passive: true });
-        rafId = requestAnimationFrame(onFrame);
-
-        return () => {
-          cancelAnimationFrame(rafId);
-          window.removeEventListener("scroll", syncProxy);
-          window.removeEventListener("resize", syncProxy);
-        };
-      }, [stage, reduced]);
+        }, 100);
+      };
 
       // ── Global Keyboard Y/N Listener ──
       useEffect(() => {
         const handleKeyDown = (e) => {
-          if (lightboxImage) return;
+          if (lightboxImage) return; // Lightbox handles its own keys (Escape, +/-, 0)
+          const tag = e.target.tagName.toLowerCase();
+          if (tag === "input" || tag === "textarea") return;
+
           const key = e.key.toUpperCase();
           if (key === "Y" || key === "N") {
             advanceStage(key);
@@ -4140,42 +3907,9 @@ const Folder = ({
         return () => window.removeEventListener("keydown", handleKeyDown);
       }, [stage, lightboxImage]);
 
-      // ── Slow, Cinematic 'Y' Transitions ──
-      const advanceStage = (choice) => {
-        if (stage >= 5) return;
-        const nextStage = stage + 1;
-        setUserChoices(prev => ({ ...prev, [stage]: choice }));
-        setStage(nextStage);
-
-        glidingTargetStageRef.current = nextStage;
-        glidingUntilRef.current = Date.now() + 2000;
-
-        setRun(n => n + 1);
-
-        setTimeout(() => {
-          const stageTargets = [cardRef0, cardRef1, cardRef2, cardRef3, cardRef4, cardRef5];
-          const nextTarget = stageTargets[nextStage]?.current;
-          if (nextTarget) {
-            nextTarget.scrollIntoView({ behavior: "smooth", block: "center" });
-          }
-        }, 120);
-      };
-
       return (
-        <div className="min-h-screen bg-[#0b0b0e] text-slate-200 px-4 sm:px-8 py-12 flex flex-col items-center justify-start relative text-left">
+        <div className="min-h-screen bg-[#0b0b0e] text-slate-200 px-4 sm:px-8 py-10 flex flex-col items-center justify-start relative text-left">
           
-          {/* Full-Viewport Fixed LaserFlow Background with Smart Glow & Recoil */}
-          <BeamBackground
-            proxyRef={proxyRef}
-            run={run}
-            webgl2={webgl2}
-            beamPosition={0.5}
-            folderMode={folderMode}
-            phone={phone}
-            coarse={coarse}
-            reduced={reduced}
-          />
-
           {/* Floating Replay Intro Button (Fixed Top-Right) */}
           {webgl2 && !reduced && (
             <button
@@ -4195,42 +3929,78 @@ const Folder = ({
           )}
 
           {/* Main Content Layout Column (Spacious max-w-4xl Frame) */}
-          <div className="w-full max-w-4xl z-10 relative flex flex-col gap-14 my-4">
+          <div className="w-full max-w-4xl z-10 relative flex flex-col gap-14 my-2">
 
-            {/* ── HERO HEADER SECTION ── */}
-            <div className="flex flex-col items-center text-center pt-2 pb-2">
-              <h1 className="text-4xl sm:text-6xl font-bold tracking-tight text-white mb-5 font-sans">
-                Autonomous Patrol Rover
-              </h1>
-              <p className="text-slate-300 text-base sm:text-lg font-normal leading-relaxed max-w-2xl mx-auto font-sans">
-                A custom 3D robotics simulation running real-time AI vision entirely on local hardware. We engineered a platform that uses YOLOv8 and OpenAI CLIP to navigate, spot objects, and patrol environments without relying on cloud processing.
-              </p>
-            </div>
-
-            {/* ── STAGE 0: HERO TERMINAL BOXED CLI DASHBOARD ── */}
-            <section
-              id="card-hero"
-              ref={cardRef0}
-              className="w-full rounded-2xl shadow-2xl border border-white/10 overflow-hidden bg-[#0d0d0d] z-10 transition-all duration-300"
-            >
-              <TerminalCard />
-              
-              <div className="p-5 sm:p-6 border-t border-white/10 bg-[#141416]/95">
-                <div className="mb-4">
-                  <p className="text-slate-200 text-sm sm:text-base leading-relaxed font-sans">
-                    Autonomous robotics requires deterministic 60 FPS physics and sub-millisecond IPC loops. Instead of offloading video feeds to high-latency cloud servers, our architecture runs dual neural networks directly on Apple Silicon MPS and NVIDIA CUDA cores at zero latency.
-                  </p>
+            {/* ── HERO STAGE (LaserFlow Bounded in Hero Only — Auto-Pauses via IntersectionObserver on Scroll) ── */}
+            <div className="hero-stage-wrapper relative w-full overflow-hidden rounded-3xl pt-2 pb-2 flex flex-col items-center">
+              {/* Unmodified WebGL2 LaserFlow Canvas (Mounted ONLY in Hero) */}
+              {webgl2 ? (
+                <div className="absolute inset-0 w-full h-full pointer-events-none z-0 overflow-hidden">
+                  <LaserFlow
+                    key={run}
+                    surfaceRef={heroCardRef}
+                    beamPosition={0.5}
+                    color="#3847ff"
+                    intensity={phone ? 1.5 : 1.8}
+                    beamWidth={phone ? 1.2 : 1.5}
+                    flare={phone ? 1.2 : 1.5}
+                    spread={phone ? 1.2 : 1.5}
+                    spill={1.0}
+                    fog={0.2}
+                    dust={1.6}
+                    streaks={1.5}
+                    dots={1.0}
+                    pulse={1.5}
+                    speed={1.5}
+                    seed={3}
+                    mouseInteraction={!coarse}
+                    revealImage="./laserflow-reveal.png"
+                    revealRadius={220}
+                    revealOpacity={0.6}
+                    intro={!reduced}
+                    theme="dark"
+                    dpr={phone ? 1.25 : 1.5}
+                  />
                 </div>
+              ) : (
+                <div className="laser-hero__fallback" aria-hidden="true" />
+              )}
 
-                <PromptRow
-                  promptText="Inspect YOLOv8 Spatial Cortex & Metrics? [Y/N]:"
-                  stageIndex={0}
-                  currentStage={stage}
-                  userChoice={userChoices[0]}
-                  onAdvance={advanceStage}
-                />
+              {/* ── HERO HEADER SECTION ── */}
+              <div className="relative z-10 flex flex-col items-center text-center pt-4 pb-6 px-4">
+                <h1 className="text-4xl sm:text-6xl font-bold tracking-tight text-white mb-5 font-sans">
+                  Autonomous Patrol Rover
+                </h1>
+                <p className="text-slate-300 text-base sm:text-lg font-normal leading-relaxed max-w-2xl mx-auto font-sans">
+                  A custom 3D robotics simulation running real-time AI vision entirely on local hardware. We engineered a platform that uses YOLOv8 and OpenAI CLIP to navigate, spot objects, and patrol environments without relying on cloud processing.
+                </p>
               </div>
-            </section>
+
+              {/* ── STAGE 0: HERO TERMINAL BOXED CLI DASHBOARD ── */}
+              <section
+                id="card-hero"
+                ref={heroCardRef}
+                className="relative z-10 w-full rounded-2xl shadow-2xl border border-white/10 overflow-hidden bg-[#0d0d0d] ambient-card-glow transition-all duration-300"
+              >
+                <TerminalCard />
+                
+                <div className="p-5 sm:p-6 border-t border-white/10 bg-[#141416]/95">
+                  <div className="mb-4">
+                    <p className="text-slate-200 text-sm sm:text-base leading-relaxed font-sans">
+                      Autonomous robotics requires deterministic 60 FPS physics and sub-millisecond IPC loops. Instead of offloading video feeds to high-latency cloud servers, our architecture runs dual neural networks directly on Apple Silicon MPS and NVIDIA CUDA cores at zero latency.
+                    </p>
+                  </div>
+
+                  <PromptRow
+                    promptText="Inspect YOLOv8 Spatial Cortex & Metrics? [Y/N]:"
+                    stageIndex={0}
+                    currentStage={stage}
+                    userChoice={userChoices[0]}
+                    onAdvance={advanceStage}
+                  />
+                </div>
+              </section>
+            </div>
 
             {/* ── STAGE 1: MODEL PERFORMANCE & TELEMETRY + SPATIAL CORTEX ── */}
             {stage >= 1 && (
@@ -4521,7 +4291,7 @@ const Folder = ({
                   <Folder
                     label="Training Data"
                     mode="flap"
-                    variant="glass"
+                    variant="solid"
                     color="#3847ff"
                     layout="spread"
                     size={folderSize}
@@ -4718,7 +4488,7 @@ const Folder = ({
                 {/* The Hub & Repository Launch Card */}
                 <div
                   id="card-stage-5"
-                  className="w-full rounded-2xl border border-white/10 bg-[#121215]/95 backdrop-blur-xl shadow-2xl p-8 sm:p-10 text-center z-10"
+                  className="w-full rounded-2xl border border-white/10 bg-[#121215]/95 backdrop-blur-xl shadow-2xl p-8 sm:p-10 text-center z-10 ambient-card-glow"
                 >
                   <h3 className="text-3xl sm:text-4xl font-bold text-white mb-4 font-sans tracking-tight">
                     Ready to run locally.
@@ -4774,11 +4544,10 @@ const Folder = ({
               onClose={() => setLightboxImage(null)}
             />
           )}
-
         </div>
       );
     }
-// Mount to DOM root
+
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<ManifestoApp />);
   </script>
