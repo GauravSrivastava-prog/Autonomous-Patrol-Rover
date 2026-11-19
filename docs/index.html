@@ -5,23 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Autonomous Patrol Rover</title>
 
-  <!-- Clean Sans-Serif (Inter) & Code Monospace (JetBrains Mono) -->
+  <!-- Clean Sans-Serif (Plus Jakarta Sans & Inter) & Code Monospace (JetBrains Mono) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com/3.4.1"></script>
   <script>
     tailwind.config = {
       theme: {
         extend: {
           fontFamily: {
-            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+            sans: ['"Plus Jakarta Sans"', 'Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
             mono: ['"JetBrains Mono"', 'monospace'],
           }
         }
       }
     };
   </script>
+
+  <!-- GSAP 3.12.5 & ScrollTrigger CDNs for React Bits SplitText -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
 
   <!-- React 18, ReactDOM & Babel Standalone CDNs -->
   <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
@@ -90,6 +94,48 @@
     }
     .hero-text-shadow {
       text-shadow: 0 2px 18px rgba(0, 0, 0, 0.9), 0 1px 4px rgba(0, 0, 0, 0.95);
+    }
+
+    /* Hero Header Group & Soft Dark Radial Backdrop */
+    .hero-header-group {
+      position: relative;
+    }
+    .hero-header-backdrop {
+      position: absolute;
+      inset: -24px -48px;
+      background: radial-gradient(ellipse at center, rgba(10, 10, 18, 0.82) 0%, rgba(10, 10, 18, 0.45) 48%, transparent 72%);
+      pointer-events: none;
+      z-index: -1;
+      border-radius: 40px;
+    }
+
+    /* SplitText Display Typography */
+    .hero-split-heading {
+      font-size: clamp(2.75rem, 5.5vw, 4.5rem) !important;
+      line-height: 1.08 !important;
+      letter-spacing: -0.03em !important;
+      font-weight: 800 !important;
+      font-family: "Plus Jakarta Sans", var(--font-sans);
+    }
+
+    /* Choreographed Subheading Entrance (700ms fade-up starting at 250ms) */
+    .hero-subheading {
+      font-size: clamp(1.05rem, 1.4vw, 1.2rem);
+      font-family: "Plus Jakarta Sans", var(--font-sans);
+      animation: heroSubheadingFadeUp 700ms cubic-bezier(0.16, 1, 0.3, 1) 250ms forwards;
+      opacity: 0;
+      transform: translateY(12px);
+    }
+
+    @keyframes heroSubheadingFadeUp {
+      0% {
+        opacity: 0;
+        transform: translateY(12px);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     /* Ambient GPU-Friendly CSS Card Glow (Zero JS / Zero WebGL Cost) */
@@ -343,16 +389,16 @@
       color: #b8b6c4;
     }
 
-    /* Subtle CRT Scanline Vignette */
+    /* Subtle CRT Scanline Vignette (Moved strictly to z-index: 0 behind text, cards, and folders) */
     body::before {
       content: "";
       position: fixed;
       top: 0; left: 0; width: 100vw; height: 100vh;
-      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.22) 50%),
-                  linear-gradient(90deg, rgba(255, 0, 0, 0.015), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.015));
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.15) 50%),
+                  linear-gradient(90deg, rgba(255, 0, 0, 0.01), rgba(0, 255, 0, 0.008), rgba(0, 0, 255, 0.01));
       background-size: 100% 3px, 6px 100%;
       pointer-events: none;
-      z-index: 999;
+      z-index: 0;
     }
 
     @keyframes blink {
@@ -689,22 +735,25 @@
 
 .folder-doc-title {
   overflow: hidden;
-  margin-bottom: calc(4px * var(--folder-scale));
-  color: var(--folder-paper-text);
-  font-size: calc(11px * var(--folder-scale));
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.2;
+  margin-bottom: calc(3px * var(--folder-scale));
+  color: #0f1117 !important;
+  font-family: "Plus Jakarta Sans", var(--font-sans) !important;
+  font-size: calc(11.5px * var(--folder-scale)) !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.015em !important;
+  line-height: 1.25 !important;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .folder-doc-text {
-  margin-top: calc(-6px * var(--folder-scale));
+  margin-top: calc(1px * var(--folder-scale));
   margin-bottom: calc(4px * var(--folder-scale));
-  color: var(--folder-paper-ink-strong);
-  font-size: calc(9px * var(--folder-scale));
-  line-height: 1.3;
+  color: #2d3242 !important;
+  font-family: "Plus Jakarta Sans", var(--font-sans) !important;
+  font-size: calc(9.5px * var(--folder-scale)) !important;
+  font-weight: 500 !important;
+  line-height: 1.35 !important;
 }
 
 .folder-doc-heading {
@@ -756,7 +805,7 @@
 
   <!-- React Babel Script -->
   <script type="text/babel">
-    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+    const { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Inlined LaserFlow Component (from https://reactbits.dev/r/LaserFlow-JS-CSS.json)
@@ -1669,6 +1718,332 @@ const LaserFlow = React.memo(({
     </div>
   );
 });
+
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // React Bits <SplitText /> Component (GSAP-Powered Staggered Entrance & Lift)
+    // ─────────────────────────────────────────────────────────────────────────────
+    class GSAPSplitText {
+      constructor(element, options = {}) {
+        this.element = element;
+        this.options = options;
+        this.originalContent = element.innerHTML;
+        this.chars = [];
+        this.words = [];
+        this.lines = [];
+        this.split(options);
+      }
+      split(options = {}) {
+        const text = this.element.textContent || '';
+        const charsClass = options.charsClass || 'split-char';
+        const wordsClass = options.wordsClass || 'split-word';
+        
+        this.element.innerHTML = '';
+        this.chars = [];
+        this.words = [];
+        this.lines = [];
+
+        const wordsList = text.split(/(\s+)/);
+        wordsList.forEach(w => {
+          if (!w) return;
+          if (/^\s+$/.test(w)) {
+            const space = document.createTextNode(w);
+            this.element.appendChild(space);
+            return;
+          }
+          const wordSpan = document.createElement('span');
+          wordSpan.className = wordsClass;
+          wordSpan.style.display = 'inline-block';
+          wordSpan.style.whiteSpace = 'nowrap';
+          
+          const charArr = Array.from(w);
+          charArr.forEach(c => {
+            const charSpan = document.createElement('span');
+            charSpan.className = charsClass;
+            charSpan.style.display = 'inline-block';
+            charSpan.style.position = 'relative';
+            charSpan.textContent = c;
+            wordSpan.appendChild(charSpan);
+            this.chars.push(charSpan);
+          });
+          this.element.appendChild(wordSpan);
+          this.words.push(wordSpan);
+        });
+
+        this.lines = [this.element];
+        if (typeof options.onSplit === 'function') {
+          options.onSplit(this);
+        }
+      }
+      revert() {
+        this.element.innerHTML = this.originalContent;
+      }
+    }
+
+    const useGSAP = (callback, { dependencies = [], scope } = {}) => {
+      useEffect(() => {
+        if (typeof gsap === 'undefined') return;
+        let ctx = gsap.context(callback, scope?.current || scope);
+        return () => ctx.revert();
+      }, dependencies);
+    };
+
+    const SPLIT_DEFAULT_FROM = { opacity: 0, y: 40 };
+    const SPLIT_DEFAULT_TO = { opacity: 1, y: 0 };
+    const SPLIT_STIFFNESS = 180;
+    const SPLIT_DAMPING = 19;
+    const SPLIT_KICK = 0.024;
+    const useIsoLayoutEffect = typeof window !== 'undefined' ? (typeof useLayoutEffect !== 'undefined' ? useLayoutEffect : useEffect) : useEffect;
+    const fontsAreLoaded = () => typeof document !== 'undefined' && (!document.fonts || document.fonts.status === 'loaded');
+
+    const SplitText = ({
+      text,
+      className = '',
+      delay = 15,
+      duration = 1.25,
+      ease,
+      splitType = 'chars',
+      from,
+      to,
+      threshold = 0.1,
+      rootMargin = '-100px',
+      textAlign = 'center',
+      tag = 'p',
+      staggerFrom = 'start',
+      mask = false,
+      effect = 'rise',
+      trigger = 'load',
+      loop = false,
+      loopDelay = 1.5,
+      hoverEffect = 'lift',
+      color = '#ffffff',
+      accentColor = '#60a5fa',
+      onLetterAnimationComplete
+    }) => {
+      const ref = useRef(null);
+      const completedTextRef = useRef(null);
+      const onCompleteRef = useRef(onLetterAnimationComplete);
+      const liveRef = useRef({ trigger, hoverEffect, accentColor });
+      const [fontsLoaded, setFontsLoaded] = useState(fontsAreLoaded);
+      const [ready, setReady] = useState(false);
+
+      useIsoLayoutEffect(() => {
+        onCompleteRef.current = onLetterAnimationComplete;
+        liveRef.current = { trigger, hoverEffect, accentColor };
+      });
+
+      useEffect(() => {
+        if (fontsLoaded) return undefined;
+        let active = true;
+        document.fonts.ready.then(() => {
+          if (active) setFontsLoaded(true);
+        });
+        return () => {
+          active = false;
+        };
+      }, [fontsLoaded]);
+
+      useGSAP(
+        () => {
+          const el = ref.current;
+          if (!el || !text || !fontsLoaded || typeof gsap === 'undefined') return;
+
+          const finish = () => {
+            if (completedTextRef.current === text) return;
+            completedTextRef.current = text;
+            onCompleteRef.current?.();
+          };
+
+          if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+            setReady(true);
+            finish();
+            return;
+          }
+
+          const unit = splitType.includes('chars') ? 'chars' : splitType.includes('words') ? 'words' : 'lines';
+          const em = parseFloat(getComputedStyle(el).fontSize) || 16;
+          const fromVars = from || SPLIT_DEFAULT_FROM;
+          const toVars = to || SPLIT_DEFAULT_TO;
+          const easing = ease || 'power3.out';
+          const settle = 'transform,opacity,color';
+
+          let pieces = [];
+          let movers = [];
+          let order = gsap.utils.distribute({ each: delay / 1000, from: staggerFrom });
+          let revealed = completedTextRef.current === text;
+          let intro = null;
+          let busy = null;
+          let raf = 0;
+          let last = 0;
+          let centers = null;
+          const lift = em * 0.22;
+          const springs = [];
+          const pointer = { x: 0, y: 0, inside: false };
+
+          const reveal = (initial, vars) => {
+            const accent = liveRef.current.accentColor;
+            const tl = gsap.timeline(vars);
+            tl.fromTo(
+              pieces,
+              { ...fromVars, willChange: 'transform, opacity' },
+              { ...toVars, duration, ease: easing, stagger: order, immediateRender: initial },
+              0
+            );
+            if (accent) {
+              tl.fromTo(
+                pieces,
+                { color: accent },
+                {
+                  color: color || '#ffffff',
+                  duration: duration * 0.7,
+                  ease: 'power1.inOut',
+                  stagger: order,
+                  immediateRender: initial
+                },
+                duration * 0.3
+              );
+            }
+            tl.set(pieces, { clearProps: settle });
+            return tl;
+          };
+
+          const measure = () => {
+            const box = el.getBoundingClientRect();
+            centers = movers.map((node, i) => {
+              const rect = node.getBoundingClientRect();
+              return {
+                x: rect.left + rect.width / 2 - box.left,
+                y: rect.top + rect.height / 2 - box.top - (springs[i]?.y || 0)
+              };
+            });
+          };
+
+          const tick = now => {
+            raf = 0;
+            const dt = Math.min(0.032, Math.max(0.001, (now - last) / 1000));
+            last = now;
+            const spots = liveRef.current.hoverEffect === 'lift' && pointer.inside && revealed ? centers : null;
+            const radius = em * 1.25;
+            let moving = false;
+            movers.forEach((node, i) => {
+              const spring = springs[i] || (springs[i] = { y: 0, v: 0 });
+              const spot = spots?.[i];
+              let target = 0;
+              if (spot) {
+                const dx = (spot.x - pointer.x) / radius;
+                const dy = (spot.y - pointer.y) / (radius * 1.4);
+                target = -lift * Math.exp(-(dx * dx + dy * dy) * 0.5);
+              }
+              spring.v += (SPLIT_STIFFNESS * (target - spring.y) - SPLIT_DAMPING * spring.v) * dt;
+              spring.y += spring.v * dt;
+              if (Math.abs(target - spring.y) < 0.02 && Math.abs(spring.v) < 0.05) {
+                spring.y = target;
+                spring.v = 0;
+              } else {
+                moving = true;
+              }
+              node.style.translate = Math.abs(spring.y) > 0.01 ? `0 ${spring.y.toFixed(2)}px` : '';
+            });
+            if (moving) raf = requestAnimationFrame(tick);
+          };
+
+          const wake = () => {
+            if (raf) return;
+            last = performance.now();
+            raf = requestAnimationFrame(tick);
+          };
+
+          const locate = e => {
+            const box = el.getBoundingClientRect();
+            pointer.x = e.clientX - box.left;
+            pointer.y = e.clientY - box.top;
+          };
+
+          const onEnter = e => {
+            locate(e);
+            pointer.inside = true;
+            if (!revealed || liveRef.current.hoverEffect !== 'lift') return;
+            measure();
+            wake();
+          };
+
+          const onMove = e => {
+            locate(e);
+            pointer.inside = true;
+            if (!revealed || liveRef.current.hoverEffect !== 'lift') return;
+            if (!centers) measure();
+            wake();
+          };
+
+          const onLeave = () => {
+            pointer.inside = false;
+            wake();
+          };
+
+          const splitInstance = new GSAPSplitText(el, {
+            type: splitType,
+            charsClass: 'split-char',
+            wordsClass: 'split-word',
+            onSplit: self => {
+              pieces = [self[unit], self.chars, self.words, self.lines].find(list => list.length) || [];
+              movers = pieces;
+              order = gsap.utils.distribute({ each: delay / 1000, from: staggerFrom });
+              centers = null;
+              springs.length = 0;
+              intro = reveal(true, {
+                onComplete: () => {
+                  revealed = true;
+                  intro = null;
+                  busy = null;
+                  finish();
+                }
+              });
+              busy = intro;
+              return intro;
+            }
+          });
+          setReady(true);
+
+          el.addEventListener('pointerenter', onEnter);
+          el.addEventListener('pointermove', onMove);
+          el.addEventListener('pointerleave', onLeave);
+
+          return () => {
+            cancelAnimationFrame(raf);
+            busy?.kill();
+            el.removeEventListener('pointerenter', onEnter);
+            el.removeEventListener('pointermove', onMove);
+            el.removeEventListener('pointerleave', onLeave);
+            movers.forEach(node => {
+              node.style.translate = '';
+            });
+            splitInstance.revert();
+          };
+        },
+        {
+          dependencies: [text, delay, duration, fontsLoaded],
+          scope: ref
+        }
+      );
+
+      const Tag = tag || 'p';
+
+      return (
+        <Tag
+          key={text}
+          ref={ref}
+          className={`split-parent ${className}`}
+          style={{
+            textAlign,
+            display: 'inline-block',
+            color: color || '#ffffff',
+            visibility: ready ? undefined : 'hidden'
+          }}
+        >
+          {text}
+        </Tag>
+      );
+    };
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Reusable macOS Window Component (Glassmorphism & Traffic Light Titlebar)
@@ -4268,20 +4643,36 @@ const Folder = ({
               <div className="laser-hero__fallback" aria-hidden="true" />
             )}
 
-            {/* Centered Inner Content Wrapper floating above full-bleed layer */}
-            <div className="relative z-10 w-full max-w-[960px] mx-auto flex flex-col items-center pb-0 mb-0">
+            {/* Centered Inner Content Wrapper floating above full-bleed layer with generous breathing room */}
+            <div className="relative z-10 w-full max-w-[960px] mx-auto flex flex-col items-center pb-12 sm:pb-16 mb-0">
               
-              {/* ── HERO HEADER SECTION ── */}
-              <div className="flex flex-col items-center text-center pt-4 pb-6 px-4">
-                <h1
-                  className="text-4xl sm:text-6xl font-bold tracking-tight text-white mb-5 font-sans hero-text-shadow"
-                >
-                  Autonomous Patrol Rover
-                </h1>
-                <p
-                  className="text-slate-300 text-base sm:text-lg font-normal leading-relaxed max-w-2xl mx-auto font-sans hero-text-shadow"
-                >
-                  A custom 3D robotics simulation running real-time AI vision entirely on local hardware. We engineered a platform that uses YOLOv8 and OpenAI CLIP to navigate, spot objects, and patrol environments without relying on cloud processing.
+              {/* ── HERO HEADER SECTION WITH SPLITTEXT & REFINED SUBHEADING ── */}
+              <div className="hero-header-group relative flex flex-col items-center text-center pt-5 pb-8 px-4 max-w-[760px] mx-auto z-20">
+                {/* Soft Dark Radial Backdrop Behind Heading + Subheading to Protect Readability */}
+                <div className="hero-header-backdrop" aria-hidden="true" />
+
+                {/* React Bits <SplitText /> Animated Display Heading */}
+                <SplitText
+                  text="Autonomous Patrol Rover"
+                  tag="h1"
+                  className="hero-split-heading font-extrabold tracking-[-0.03em] font-sans text-white select-none hero-text-shadow"
+                  effect="rise"
+                  splitType="chars"
+                  delay={15}
+                  duration={1.25}
+                  staggerFrom="start"
+                  trigger="load"
+                  hoverEffect="lift"
+                  loop={false}
+                  mask={false}
+                  textAlign="center"
+                  color="#ffffff"
+                  accentColor="#60a5fa"
+                />
+
+                {/* Refined Ice-White Subheading with Choreographed Entrance & Technical Highlights */}
+                <p className="hero-subheading text-[#dbe4ff] font-normal leading-[1.65] max-w-[680px] mx-auto font-sans mt-5 select-none hero-text-shadow">
+                  A custom 3D robotics simulation running <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">real-time AI vision</span> entirely on <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">local hardware</span>. We engineered an edge platform using <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">YOLOv8</span> and <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">OpenAI CLIP</span> to navigate, detect hazards, and patrol complex environments without cloud latency.
                 </p>
               </div>
 
@@ -4525,15 +4916,15 @@ const Folder = ({
                     items={[
                       {
                         title: "The Eyes: YOLOv8",
-                        description: "Scans the camera feed 60 times a second and draws boxes around physical obstacles—chairs, stairs, and traffic cones—so the rover knows where not to crash."
+                        description: "60 FPS obstacle detection. Boxes chairs, cones & stairs in 4.9ms."
                       },
                       {
                         title: "The Brain: OpenAI CLIP",
-                        description: "Connects images to plain English. Tell the rover to 'find the red fire extinguisher' and CLIP locates it without retraining."
+                        description: "Zero-shot English search. Finds targets like \"red extinguisher\" without retraining."
                       },
                       {
-                        title: "Edge Reflex Loop",
-                        description: "Runs 100% locally on Apple Silicon MPS at 4.9ms inference and 2.6µs semantic lookup—zero cloud latency."
+                        title: "Local Edge Loop",
+                        description: "100% on-device Apple Silicon MPS. 2.6µs semantic lookup, zero cloud lag."
                       }
                     ]}
                   />
@@ -4632,16 +5023,16 @@ const Folder = ({
                     theme="dark"
                     items={[
                       {
-                        title: "Kaggle Datasets",
-                        description: "Trained on real-world indoor office hazards, corridor debris, construction cones, and warehouse obstacle distributions."
+                        title: "Fused Datasets",
+                        description: "Kaggle Office + Obstacle datasets merged for indoor & outdoor hazards."
                       },
                       {
-                        title: "800-Image Augmentation",
-                        description: "Synthetic domain randomization with varying lighting, camera blur, perspective distortion, and simulated sensor noise."
+                        title: "800-Image Micro-Split",
+                        description: "Perspective shifts & color jitter bridging real photos to 3D sim."
                       },
                       {
-                        title: "NVIDIA T4 → Apple M3 Export",
-                        description: "Trained with PyTorch AMP on NVIDIA T4 Tensor Cores, exported to CoreML/MPS float16 for zero-overhead edge deployment."
+                        title: "T4 → M3 Export",
+                        description: "29 epochs on NVIDIA T4 (0.594 mAP@50), exported to FP16 ONNX/MPS."
                       }
                     ]}
                   />
@@ -4770,29 +5161,41 @@ const Folder = ({
                     </span>
                   }
                 >
-                  <div className="space-y-4 mb-6">
+                  <div className="space-y-5 mb-6">
+                    {/* Option 1: Zero-Install Launch (Recommended / uvx) */}
                     <div>
                       <div className="text-xs font-mono text-slate-400 mb-1.5 flex items-center justify-between">
-                        <span>1. Clone Repository &amp; Setup Virtualenv</span>
+                        <span className="text-emerald-400 font-semibold">Option 1: Zero-Install Launch (Recommended)</span>
+                        <span className="text-slate-500">uvx • Zero Setup</span>
+                      </div>
+                      <CommandSnippet
+                        command="uvx --from git+https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git patrol-rover"
+                        note="Automatically binds http://127.0.0.1:7860"
+                      />
+                    </div>
+
+                    {/* Option 2: Clone & Global patrol-rover CLI */}
+                    <div>
+                      <div className="text-xs font-mono text-slate-400 mb-1.5 flex items-center justify-between">
+                        <span className="text-cyan-400 font-semibold">Option 2: Clone &amp; Global CLI (Run Anywhere)</span>
+                        <span className="text-slate-500">pip install -e .</span>
+                      </div>
+                      <CommandSnippet
+                        command="git clone https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git && cd Autonomous-Patrol-Rover && pip install -e . && patrol-rover"
+                        note="Installs global 'patrol-rover' binary • binds 127.0.0.1:7860"
+                      />
+                    </div>
+
+                    {/* Option 3: Direct Python Launch */}
+                    <div>
+                      <div className="text-xs font-mono text-slate-400 mb-1.5 flex items-center justify-between">
+                        <span className="text-purple-400 font-semibold">Option 3: Direct Python Launch</span>
                         <span className="text-slate-500">Python 3.10+</span>
                       </div>
-                      <CommandSnippet command="git clone https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git && cd Autonomous-Patrol-Rover" />
-                    </div>
-
-                    <div>
-                      <div className="text-xs font-mono text-slate-400 mb-1.5 flex items-center justify-between">
-                        <span>2. Install Pure Local Dependencies</span>
-                        <span className="text-slate-500">PyTorch + Ultralytics</span>
-                      </div>
-                      <CommandSnippet command="pip install -r requirements.txt" />
-                    </div>
-
-                    <div>
-                      <div className="text-xs font-mono text-slate-400 mb-1.5 flex items-center justify-between">
-                        <span>3. Launch 60 FPS Mission Deck with Hardware Acceleration</span>
-                        <span className="text-slate-500">Apple Silicon MPS / CUDA</span>
-                      </div>
-                      <CommandSnippet command="python app.py" note="Automatically binds 127.0.0.1:7860" />
+                      <CommandSnippet
+                        command="python3 app.py"
+                        note="Launches FastAPI + Webots bridge on http://127.0.0.1:7860"
+                      />
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 text-center font-mono">
