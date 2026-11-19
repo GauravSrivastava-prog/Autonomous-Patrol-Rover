@@ -724,61 +724,67 @@
   background: var(--folder-base);
 }
 
-.folder-doc {
+/* Real High-Density Content Mini Spec-Sheet for <Folder /> Cards (Zero Grey Wireframe Bars) */
+.folder-spec-card {
+  padding: 12px;
   display: flex;
-  height: 100%;
-  box-sizing: border-box;
   flex-direction: column;
-  gap: calc(6px * var(--folder-scale));
-  padding: calc(14px * var(--folder-scale)) calc(13px * var(--folder-scale));
+  justify-content: space-between;
+  background: #ffffff;
+  color: #0f1117;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: "Plus Jakarta Sans", var(--font-sans);
+  text-align: left;
+  user-select: none;
 }
 
-.folder-doc-title {
-  overflow: hidden;
-  margin-bottom: calc(3px * var(--folder-scale));
-  color: #0f1117 !important;
-  font-family: "Plus Jakarta Sans", var(--font-sans) !important;
-  font-size: calc(11.5px * var(--folder-scale)) !important;
-  font-weight: 700 !important;
-  letter-spacing: -0.015em !important;
-  line-height: 1.25 !important;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.folder-spec-category {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #3847ff;
+  text-transform: uppercase;
+  line-height: 1.2;
 }
 
-.folder-doc-text {
-  margin-top: calc(1px * var(--folder-scale));
-  margin-bottom: calc(4px * var(--folder-scale));
-  color: #2d3242 !important;
-  font-family: "Plus Jakarta Sans", var(--font-sans) !important;
-  font-size: calc(9.5px * var(--folder-scale)) !important;
-  font-weight: 500 !important;
-  line-height: 1.35 !important;
+.folder-spec-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #0f1117;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  margin: 0;
 }
 
+.folder-spec-desc {
+  font-size: 8.5px;
+  line-height: 1.35;
+  color: #2d3242;
+  font-weight: 500;
+  margin: 2px 0 0 0;
+}
+
+.folder-spec-footer {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 6px;
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 8px;
+  font-weight: 600;
+  font-family: "JetBrains Mono", monospace;
+  color: #334155;
+  line-height: 1.2;
+}
+
+/* Eliminate all skeleton placeholder lines and boxes permanently */
+.folder-doc-line,
+.folder-doc-block,
 .folder-doc-heading {
-  width: 56%;
-  height: calc(7px * var(--folder-scale));
-  flex: none;
-  margin-bottom: calc(4px * var(--folder-scale));
-  border-radius: 999px;
-  background: var(--folder-paper-ink-strong);
-}
-
-.folder-doc-line {
-  height: calc(4px * var(--folder-scale));
-  flex: none;
-  border-radius: 999px;
-  background: var(--folder-paper-ink);
-}
-
-.folder-doc-block {
-  height: calc(40px * var(--folder-scale));
-  flex: none;
-  margin: calc(3px * var(--folder-scale)) 0;
-  border-radius: calc(5px * var(--folder-scale));
-  background: var(--folder-paper-ink);
-  opacity: 0.75;
+  display: none !important;
 }
 
 .folder-photo {
@@ -2309,6 +2315,104 @@ const LaserFlow = React.memo(({
       );
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Mini Spec-Sheet Component for <Folder /> Cards (Zero-Wireframe, Full Real Content)
+    // ─────────────────────────────────────────────────────────────────────────────
+    function FolderSpecCard({ category, title, description, spec1, spec2, rawSpec, metric, specs }) {
+      const bottomSpec = rawSpec || metric || specs;
+      return (
+        <div
+          className="folder-spec-card select-none"
+          style={{
+            padding: '12px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            background: '#ffffff',
+            color: '#0f1117',
+            height: '100%',
+            width: '100%',
+            boxSizing: 'border-box',
+            fontFamily: '"Plus Jakarta Sans", var(--font-sans)',
+            textAlign: 'left'
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            {category && (
+              <span
+                className="folder-spec-category"
+                style={{
+                  fontSize: '8px',
+                  fontWeight: 700,
+                  letterSpacing: '0.06em',
+                  color: '#3847ff',
+                  textTransform: 'uppercase',
+                  lineHeight: 1.2
+                }}
+              >
+                {category}
+              </span>
+            )}
+            {title && (
+              <h4
+                className="folder-spec-title"
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: '#0f1117',
+                  lineHeight: 1.25,
+                  letterSpacing: '-0.015em',
+                  margin: 0
+                }}
+              >
+                {title}
+              </h4>
+            )}
+            {description && (
+              <p
+                className="folder-spec-desc"
+                style={{
+                  fontSize: '8.5px',
+                  lineHeight: 1.35,
+                  color: '#2d3242',
+                  fontWeight: 500,
+                  margin: '2px 0 0 0'
+                }}
+              >
+                {description}
+              </p>
+            )}
+          </div>
+
+          <div
+            className="folder-spec-footer"
+            style={{
+              borderTop: '1px solid #e5e7eb',
+              paddingTop: '6px',
+              marginTop: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontSize: '8px',
+              fontWeight: 600,
+              fontFamily: '"JetBrains Mono", monospace',
+              lineHeight: 1.2
+            }}
+          >
+            {bottomSpec ? (
+              <span style={{ color: '#334155' }}>{bottomSpec}</span>
+            ) : (
+              <React.Fragment>
+                <span style={{ color: '#2563eb' }}>{spec1}</span>
+                <span style={{ color: '#94a3b8' }}>•</span>
+                <span style={{ color: '#475569' }}>{spec2}</span>
+              </React.Fragment>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     const Folder = (() => {
       const { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } = React;
       
@@ -2971,17 +3075,15 @@ const paintBack = (g, top, bottom, dpr) => {
   return canvas;
 };
 
-const DocumentCard = ({ title, description }) => (
-  <div className="folder-doc">
-    {title ? <span className="folder-doc-title">{title}</span> : <span className="folder-doc-heading" />}
-    {description && <span className="folder-doc-text">{description}</span>}
-    <span className="folder-doc-line" style={{ width: '92%' }} />
-    <span className="folder-doc-line" style={{ width: '84%' }} />
-    <span className="folder-doc-line" style={{ width: '88%' }} />
-    <span className="folder-doc-block" />
-    <span className="folder-doc-line" style={{ width: '80%' }} />
-    <span className="folder-doc-line" style={{ width: '62%' }} />
-  </div>
+const DocumentCard = ({ category, title, description, spec1, spec2, rawSpec, metric, specs }) => (
+  <FolderSpecCard
+    category={category || "SPECIFICATION"}
+    title={title || "Module"}
+    description={description || ""}
+    spec1={spec1 || "Edge"}
+    spec2={spec2 || "Native"}
+    rawSpec={rawSpec || metric || specs}
+  />
 );
 
 const renderItem = item => {
@@ -2996,7 +3098,16 @@ const renderItem = item => {
       );
     }
     if (item.content) return item.content;
-    return <DocumentCard title={item.title} description={item.description} />;
+    return (
+      <DocumentCard
+        category={item.category}
+        title={item.title}
+        description={item.description}
+        spec1={item.spec1}
+        spec2={item.spec2}
+        rawSpec={item.rawSpec || item.metric || item.specs}
+      />
+    );
   }
   return <DocumentCard />;
 };
@@ -4915,16 +5026,52 @@ const Folder = ({
                     theme="dark"
                     items={[
                       {
+                        category: "PERCEPTION",
                         title: "The Eyes: YOLOv8",
-                        description: "60 FPS obstacle detection. Boxes chairs, cones & stairs in 4.9ms."
+                        description: "Real-time obstacle detection running every frame. Draws tight bounding boxes around physical hazards—chairs, stairs, cones, and manholes—so the rover avoids collisions autonomously.",
+                        spec1: "4.9 ms / img",
+                        spec2: "60 FPS Loop",
+                        content: (
+                          <FolderSpecCard
+                            category="PERCEPTION"
+                            title="The Eyes: YOLOv8"
+                            description="Real-time obstacle detection running every frame. Draws tight bounding boxes around physical hazards—chairs, stairs, cones, and manholes—so the rover avoids collisions autonomously."
+                            spec1="4.9 ms / img"
+                            spec2="60 FPS Loop"
+                          />
+                        )
                       },
                       {
+                        category: "SEMANTICS",
                         title: "The Brain: OpenAI CLIP",
-                        description: "Zero-shot English search. Finds targets like \"red extinguisher\" without retraining."
+                        description: "Zero-shot vision-language reasoning (ViT-B/32). Connects raw camera crops to plain English prompts like \"find the red fire extinguisher\" without needing retraining for new targets.",
+                        spec1: "2.6 µs Cache",
+                        spec2: "Zero-Shot",
+                        content: (
+                          <FolderSpecCard
+                            category="SEMANTICS"
+                            title="The Brain: OpenAI CLIP"
+                            description={'Zero-shot vision-language reasoning (ViT-B/32). Connects raw camera crops to plain English prompts like "find the red fire extinguisher" without needing retraining for new targets.'}
+                            spec1="2.6 µs Cache"
+                            spec2="Zero-Shot"
+                          />
+                        )
                       },
                       {
-                        title: "Local Edge Loop",
-                        description: "100% on-device Apple Silicon MPS. 2.6µs semantic lookup, zero cloud lag."
+                        category: "EDGE RUNTIME",
+                        title: "Sovereign Edge Loop",
+                        description: "Both models run 100% locally on Apple Silicon MPS / CUDA via a zero-latency FastAPI WebSocket bridge to Webots R2025a—no cloud APIs, no rate limits.",
+                        spec1: "0 Cloud Calls",
+                        spec2: "Local IPC",
+                        content: (
+                          <FolderSpecCard
+                            category="EDGE RUNTIME"
+                            title="Sovereign Edge Loop"
+                            description="Both models run 100% locally on Apple Silicon MPS / CUDA via a zero-latency FastAPI WebSocket bridge to Webots R2025a—no cloud APIs, no rate limits."
+                            spec1="0 Cloud Calls"
+                            spec2="Local IPC"
+                          />
+                        )
                       }
                     ]}
                   />
@@ -5023,16 +5170,52 @@ const Folder = ({
                     theme="dark"
                     items={[
                       {
-                        title: "Fused Datasets",
-                        description: "Kaggle Office + Obstacle datasets merged for indoor & outdoor hazards."
+                        category: "DATA SOURCE",
+                        title: "Fused Kaggle Datasets",
+                        description: "Combined Kaggle's Office Object Detection and Obstacle Detection datasets, normalized into a unified 25-class YOLO format covering indoor and outdoor hazards.",
+                        spec1: "25 Classes",
+                        spec2: "80/20 Split",
+                        content: (
+                          <FolderSpecCard
+                            category="DATA SOURCE"
+                            title="Fused Kaggle Datasets"
+                            description="Combined Kaggle's Office Object Detection and Obstacle Detection datasets, normalized into a unified 25-class YOLO format covering indoor and outdoor hazards."
+                            spec1="25 Classes"
+                            spec2="80/20 Split"
+                          />
+                        )
                       },
                       {
-                        title: "800-Image Micro-Split",
-                        description: "Perspective shifts & color jitter bridging real photos to 3D sim."
+                        category: "PREPROCESSING",
+                        title: "Real-to-Sim Augmentation",
+                        description: "Compressed into a curated 800-image micro-dataset and trained with Mosaic, Mixup, perspective shifts, and HSV color jitter to bridge real-world photos to 3D simulation textures.",
+                        spec1: "800 Images",
+                        spec2: "Mosaic + Mixup",
+                        content: (
+                          <FolderSpecCard
+                            category="PREPROCESSING"
+                            title="Real-to-Sim Augmentation"
+                            description="Compressed into a curated 800-image micro-dataset and trained with Mosaic, Mixup, perspective shifts, and HSV color jitter to bridge real-world photos to 3D simulation textures."
+                            spec1="800 Images"
+                            spec2="Mosaic + Mixup"
+                          />
+                        )
                       },
                       {
-                        title: "T4 → M3 Export",
-                        description: "29 epochs on NVIDIA T4 (0.594 mAP@50), exported to FP16 ONNX/MPS."
+                        category: "DEPLOYMENT",
+                        title: "T4 Training → M3 Export",
+                        description: "Fine-tuned over 29 epochs on an NVIDIA T4 GPU in Google Colab (AdamW, cosine LR, early stopping), then exported to FP16 ONNX & PyTorch weights for local M3 Pro execution.",
+                        spec1: "0.594 mAP@50",
+                        spec2: "6.18 MB FP16",
+                        content: (
+                          <FolderSpecCard
+                            category="DEPLOYMENT"
+                            title="T4 Training → M3 Export"
+                            description="Fine-tuned over 29 epochs on an NVIDIA T4 GPU in Google Colab (AdamW, cosine LR, early stopping), then exported to FP16 ONNX & PyTorch weights for local M3 Pro execution."
+                            spec1="0.594 mAP@50"
+                            spec2="6.18 MB FP16"
+                          />
+                        )
                       }
                     ]}
                   />
