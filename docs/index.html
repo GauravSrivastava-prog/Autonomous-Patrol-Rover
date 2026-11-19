@@ -4783,7 +4783,7 @@ const Folder = ({
 
                 {/* Refined Ice-White Subheading with Choreographed Entrance & Technical Highlights */}
                 <p className="hero-subheading text-[#dbe4ff] font-normal leading-[1.65] max-w-[680px] mx-auto font-sans mt-5 select-none hero-text-shadow">
-                  A custom 3D robotics simulation running <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">real-time AI vision</span> entirely on <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">local hardware</span>. We engineered an edge platform using <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">YOLOv8</span> and <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">OpenAI CLIP</span> to navigate, detect hazards, and patrol complex environments without cloud latency.
+                  A simulated patrol rover that sees, decides, and moves on its own, powered by <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">real-time AI vision</span> that runs entirely on <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">local hardware</span> instead of the cloud. <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">YOLOv8</span> spots obstacles in every frame, and <span className="text-white font-semibold underline decoration-[#93c5fd]/60 underline-offset-4 decoration-1">OpenAI CLIP</span> understands plain-English goals like “find the red fire extinguisher.” Scroll down to see how it works, what it measures, and how to run it yourself.
                 </p>
               </div>
 
@@ -4798,7 +4798,7 @@ const Folder = ({
                 <div className="p-5 sm:p-6 border-t border-white/10 bg-[#141416]/95">
                   <div className="mb-4">
                     <p className="text-slate-200 text-sm sm:text-base leading-relaxed font-sans">
-                      Autonomous robotics requires deterministic 60 FPS physics and sub-millisecond IPC loops. Instead of offloading video feeds to high-latency cloud servers, our architecture runs dual neural networks directly on Apple Silicon MPS and NVIDIA CUDA cores at zero latency.
+                      Robots that patrol in real time can’t afford to wait on a network round-trip. Every decision here — spotting a hazard, understanding a command — happens on the machine running the simulation itself, using Apple Silicon’s MPS or an NVIDIA CUDA GPU. No cloud call, no rate limit, no gap between seeing something and reacting to it.
                     </p>
                   </div>
 
@@ -4848,7 +4848,7 @@ const Folder = ({
                       Model Performance &amp; Telemetry
                     </h2>
                     <p className="text-slate-400 text-sm sm:text-base font-normal font-sans mt-1">
-                      Hardware-accelerated edge inference benchmarks on Apple Silicon MPS and NVIDIA T4 Tensor Cores.
+                      How accurately and how fast the vision model runs on the Apple Silicon chip this simulation actually uses. The numbers below — mAP, precision, and recall — measure how reliably it finds the right hazard without false alarms. Training itself happened separately, on an NVIDIA T4 GPU in Google Colab.
                     </p>
                   </div>
 
@@ -4895,7 +4895,7 @@ const Folder = ({
                   <MediaBreakout
                     title="Training Convergence &amp; Precision-Recall Analysis"
                     badge="PR_curve.png • 2250x1500 4K Native"
-                    caption="High-resolution Precision-Recall curves showing rapid mAP@0.5 convergence across all 6 hazard classes over 29 fine-tuning epochs on NVIDIA T4 GPU."
+                    caption="Precision-recall curves tracking how quickly the model learned to recognize all six hazard classes, over 29 training passes on an NVIDIA T4 GPU."
                   >
                     <div
                       className="group relative rounded-xl overflow-hidden cursor-zoom-in transition-all duration-300 hover:border-cyan-500/50 hover:shadow-[0_0_30px_rgba(0,229,255,0.15)] foggy-glass-card"
@@ -4904,7 +4904,7 @@ const Folder = ({
                         fallback: "./media/yolo_metrics.png",
                         title: "Training Convergence & Precision-Recall Analysis",
                         badge: "PR_curve.png • 2250x1500 4K Native",
-                        caption: "High-resolution Precision-Recall curves showing rapid mAP@0.5 convergence across all 6 hazard classes over 29 fine-tuning epochs on NVIDIA T4 GPU."
+                        caption: "Precision-recall curves tracking how quickly the model learned to recognize all six hazard classes, over 29 training passes on an NVIDIA T4 GPU."
                       })}
                     >
                       <div className="w-full aspect-[3/2] max-h-[560px] flex items-center justify-center p-2 sm:p-4">
@@ -4929,7 +4929,7 @@ const Folder = ({
                   <MediaBreakout
                     title="Live Multi-Object Bounding Boxes &amp; Confidence Tracking"
                     badge="val_batch0_pred.jpg • 1920x1098 Native"
-                    caption="Validation batch predictions demonstrating tight bounding box regression, 99.5% accuracy on traffic cones and chairs, and real-to-sim spatial generalization."
+                    caption="A real validation batch: the model drawing tight boxes around hazards it has never seen before, with 99.5% accuracy on traffic cones and chairs — proof the training carries over from real photos into the simulation."
                   >
                     <div
                       className="group relative rounded-xl overflow-hidden cursor-zoom-in transition-all duration-300 hover:border-cyan-500/50 hover:shadow-[0_0_30px_rgba(0,229,255,0.15)] foggy-glass-card"
@@ -4938,7 +4938,7 @@ const Folder = ({
                         fallback: "./media/yolo_vision.png",
                         title: "Live Multi-Object Bounding Boxes & Confidence Tracking",
                         badge: "val_batch0_pred.jpg • 1920x1098 Native",
-                        caption: "Validation batch predictions demonstrating tight bounding box regression, 99.5% accuracy on traffic cones and chairs, and real-to-sim spatial generalization."
+                        caption: "A real validation batch: the model drawing tight boxes around hazards it has never seen before, with 99.5% accuracy on traffic cones and chairs — proof the training carries over from real photos into the simulation."
                       })}
                     >
                       <div className="w-full aspect-[16/9] max-h-[560px] flex items-center justify-center p-2 sm:p-4">
@@ -5007,7 +5007,7 @@ const Folder = ({
                     How It Works: Reflexes vs. Reasoning
                   </h2>
                   <p className="text-slate-400 text-sm sm:text-base font-normal font-sans mt-1">
-                    The Extended Rover View: how two complementary AI models give the rover eyes to dodge hazards and a brain to understand instructions.
+                    Two AI models split the work the way a nervous system does: one reacts instantly to what’s directly in front of it, the other reasons about what it’s actually being asked to do.
                   </p>
                 </div>
 
@@ -5028,14 +5028,14 @@ const Folder = ({
                       {
                         category: "PERCEPTION",
                         title: "The Eyes: YOLOv8",
-                        description: "Real-time obstacle detection running every frame. Draws tight bounding boxes around physical hazards—chairs, stairs, cones, and manholes—so the rover avoids collisions autonomously.",
+                        description: "Scans every frame in real time and draws a box around anything in the way — chairs, stairs, cones, open manholes — so the rover can steer around it without being told how.",
                         spec1: "4.9 ms / img",
                         spec2: "60 FPS Loop",
                         content: (
                           <FolderSpecCard
                             category="PERCEPTION"
                             title="The Eyes: YOLOv8"
-                            description="Real-time obstacle detection running every frame. Draws tight bounding boxes around physical hazards—chairs, stairs, cones, and manholes—so the rover avoids collisions autonomously."
+                            description="Scans every frame in real time and draws a box around anything in the way — chairs, stairs, cones, open manholes — so the rover can steer around it without being told how."
                             spec1="4.9 ms / img"
                             spec2="60 FPS Loop"
                           />
@@ -5044,14 +5044,14 @@ const Folder = ({
                       {
                         category: "SEMANTICS",
                         title: "The Brain: OpenAI CLIP",
-                        description: "Zero-shot vision-language reasoning (ViT-B/32). Connects raw camera crops to plain English prompts like \"find the red fire extinguisher\" without needing retraining for new targets.",
+                        description: "Understands plain-English goals it was never specifically trained on. Tell it to ‘find the red fire extinguisher’ and CLIP compares that sentence against what the camera sees, matching meaning instead of memorized labels.",
                         spec1: "2.6 µs Cache",
                         spec2: "Zero-Shot",
                         content: (
                           <FolderSpecCard
                             category="SEMANTICS"
                             title="The Brain: OpenAI CLIP"
-                            description={'Zero-shot vision-language reasoning (ViT-B/32). Connects raw camera crops to plain English prompts like "find the red fire extinguisher" without needing retraining for new targets.'}
+                            description="Understands plain-English goals it was never specifically trained on. Tell it to ‘find the red fire extinguisher’ and CLIP compares that sentence against what the camera sees, matching meaning instead of memorized labels." 
                             spec1="2.6 µs Cache"
                             spec2="Zero-Shot"
                           />
@@ -5060,14 +5060,14 @@ const Folder = ({
                       {
                         category: "EDGE RUNTIME",
                         title: "Sovereign Edge Loop",
-                        description: "Both models run 100% locally on Apple Silicon MPS / CUDA via a zero-latency FastAPI WebSocket bridge to Webots R2025a—no cloud APIs, no rate limits.",
+                        description: "Both models run entirely on your own machine. A FastAPI WebSocket bridge streams results into the Webots simulation 60 times a second — no cloud calls, no rate limits, no dependency on someone else’s server being online.",
                         spec1: "0 Cloud Calls",
                         spec2: "Local IPC",
                         content: (
                           <FolderSpecCard
                             category="EDGE RUNTIME"
                             title="Sovereign Edge Loop"
-                            description="Both models run 100% locally on Apple Silicon MPS / CUDA via a zero-latency FastAPI WebSocket bridge to Webots R2025a—no cloud APIs, no rate limits."
+                            description="Both models run entirely on your own machine. A FastAPI WebSocket bridge streams results into the Webots simulation 60 times a second — no cloud calls, no rate limits, no dependency on someone else’s server being online."
                             spec1="0 Cloud Calls"
                             spec2="Local IPC"
                           />
@@ -5085,7 +5085,7 @@ const Folder = ({
                 <MediaBreakout
                   title="Zero-Shot Semantic Target Acquisition"
                   badge="ViT-B/32 Cosine Similarity"
-                  caption="Our embedded CLIP model matching raw camera frames against natural language prompts in under 13 milliseconds without network overhead."
+                  caption="CLIP comparing a live camera frame against a plain-English prompt and returning a match — in under 13 milliseconds, with no round trip to any server."
                 >
                   <div
                     className="group relative flex flex-col gap-2 cursor-zoom-in"
@@ -5151,7 +5151,7 @@ const Folder = ({
                     Dataset &amp; Training Provenance
                   </h2>
                   <p className="text-slate-400 text-sm sm:text-base font-normal font-sans mt-1">
-                    Curated synthetic hazard dataset and edge optimization pipeline.
+                    Where the training data came from, how it was stretched to cover cases it never directly saw, and how the finished model got small enough to run at the edge.
                   </p>
                 </div>
 
@@ -5172,14 +5172,14 @@ const Folder = ({
                       {
                         category: "DATA SOURCE",
                         title: "Fused Kaggle Datasets",
-                        description: "Combined Kaggle's Office Object Detection and Obstacle Detection datasets, normalized into a unified 25-class YOLO format covering indoor and outdoor hazards.",
+                        description: "Built from two public Kaggle datasets — one of office obstacles, one of general hazards — merged into a single 25-class format that covers both indoor and outdoor scenes.",
                         spec1: "25 Classes",
                         spec2: "80/20 Split",
                         content: (
                           <FolderSpecCard
                             category="DATA SOURCE"
                             title="Fused Kaggle Datasets"
-                            description="Combined Kaggle's Office Object Detection and Obstacle Detection datasets, normalized into a unified 25-class YOLO format covering indoor and outdoor hazards."
+                            description="Built from two public Kaggle datasets — one of office obstacles, one of general hazards — merged into a single 25-class format that covers both indoor and outdoor scenes."
                             spec1="25 Classes"
                             spec2="80/20 Split"
                           />
@@ -5188,14 +5188,14 @@ const Folder = ({
                       {
                         category: "PREPROCESSING",
                         title: "Real-to-Sim Augmentation",
-                        description: "Compressed into a curated 800-image micro-dataset and trained with Mosaic, Mixup, perspective shifts, and HSV color jitter to bridge real-world photos to 3D simulation textures.",
+                        description: "Narrowed down to 800 representative images, then multiplied their variety with mosaic tiling, mixup blending, perspective warps, and color jitter — so a model trained on real photos still recognizes hazards in the simulator’s 3D textures.",
                         spec1: "800 Images",
                         spec2: "Mosaic + Mixup",
                         content: (
                           <FolderSpecCard
                             category="PREPROCESSING"
                             title="Real-to-Sim Augmentation"
-                            description="Compressed into a curated 800-image micro-dataset and trained with Mosaic, Mixup, perspective shifts, and HSV color jitter to bridge real-world photos to 3D simulation textures."
+                            description="Narrowed down to 800 representative images, then multiplied their variety with mosaic tiling, mixup blending, perspective warps, and color jitter — so a model trained on real photos still recognizes hazards in the simulator’s 3D textures."
                             spec1="800 Images"
                             spec2="Mosaic + Mixup"
                           />
@@ -5204,14 +5204,14 @@ const Folder = ({
                       {
                         category: "DEPLOYMENT",
                         title: "T4 Training → M3 Export",
-                        description: "Fine-tuned over 29 epochs on an NVIDIA T4 GPU in Google Colab (AdamW, cosine LR, early stopping), then exported to FP16 ONNX & PyTorch weights for local M3 Pro execution.",
+                        description: "Trained for 29 passes on an NVIDIA T4 GPU in Google Colab, then shrunk to half-precision (FP16) ONNX and PyTorch weights so it runs smoothly on a local Apple M3 Pro chip — no GPU required on the machine that actually runs the rover.",
                         spec1: "0.594 mAP@50",
                         spec2: "6.18 MB FP16",
                         content: (
                           <FolderSpecCard
                             category="DEPLOYMENT"
                             title="T4 Training → M3 Export"
-                            description="Fine-tuned over 29 epochs on an NVIDIA T4 GPU in Google Colab (AdamW, cosine LR, early stopping), then exported to FP16 ONNX & PyTorch weights for local M3 Pro execution."
+                            description="Trained for 29 passes on an NVIDIA T4 GPU in Google Colab, then shrunk to half-precision (FP16) ONNX and PyTorch weights so it runs smoothly on a local Apple M3 Pro chip — no GPU required on the machine that actually runs the rover."
                             spec1="0.594 mAP@50"
                             spec2="6.18 MB FP16"
                           />
@@ -5277,7 +5277,7 @@ const Folder = ({
                 <MediaBreakout
                   title="3D Rigid-Body Physics &amp; GTA Chase Cam"
                   badge="60 FPS MPS"
-                  caption="Real-time rigid-body dynamics computed in Webots with differential drive kinematics, live LiDAR raycasting, and Apple Silicon MPS neural rendering."
+                  caption="The rover’s physics, steering, and LiDAR scanning, all simulated live in Webots while the vision model runs alongside it on Apple Silicon."
                 >
                   <div className="rounded-xl overflow-hidden aspect-video flex items-center justify-center foggy-glass-card">
                     <video
@@ -5412,7 +5412,7 @@ const Folder = ({
                   </h3>
 
                   <p className="text-slate-300 text-sm sm:text-base max-w-xl mx-auto mb-8 leading-relaxed font-sans">
-                    Autonomous robotics requires sub-millisecond IPC loops and predictable frame times. By targeting host Apple Silicon MPS and NVIDIA CUDA cores directly, we eliminate cloud latency and API rate limits. The entire codebase, simulation worlds, and neural weights are open source.
+                    Everything above is one command away. Pick whichever option fits your setup — a one-line installer, a full clone, or a direct Python launch — and the rover, its simulation worlds, and its trained weights are yours to run, inspect, and modify. All of it is open source.
                   </p>
 
                   <div className="flex justify-center">
