@@ -164,6 +164,5 @@ python3 scratch/verify_part11.py
 ## Academic Context & Attribution
 
 * **Course:** Algorithm and Robotics Lab (Semester 7)  
-* **Institution:** Department of Computer Science & Robotics, UPES  
 * **Lead Author:** Gaurav Srivastava ([Gaurav.122467@stu.upes.ac.in](mailto:Gaurav.122467@stu.upes.ac.in))  
 * **License:** [MIT License](LICENSE)
