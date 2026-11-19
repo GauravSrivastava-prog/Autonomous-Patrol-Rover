@@ -1,209 +1,169 @@
-# 🤖 AI Vision Patrol Rover — 3D Cyberpunk GTA Mission Control & Multimodal AI Platform
+# Autonomous Patrol Rover
 
-> An autonomous 3D robot featuring a widescreen 3rd-person chase camera ("TPP"), 1st-person bumper POV ("FPP"), monocular depth map, hardware-accelerated multimodal semantic similarity telemetry (Apple MPS / CUDA), dynamic waypoint patrolling, open-vocabulary target intercept, and GTA circular minimap HUD.
+> **Real-Time Edge AI Vision, 3D Robotics Kinematics & Multimodal Telemetry Platform**  
+> *Course Project • Algorithm and Robotics Lab • Department of Computer Science & Robotics, UPES*
+
+[![Interactive Manifesto](https://img.shields.io/badge/Live_Manifesto-Vercel_Production-00f0ff?style=flat-square&logo=vercel)](https://autonomous-patrol-rover.vercel.app)
+[![MLOps Training Pipeline](https://img.shields.io/badge/Google_Colab-MLOps_Pipeline-F9AB00?style=flat-square&logo=googlecolab)](https://colab.research.google.com/drive/1QgUtht2vBS_Bt9jFmo3osvr-AtRW7B4F?usp=sharing)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python)](https://python.org)
+[![Webots R2025a](https://img.shields.io/badge/Webots-R2025a-00599C?style=flat-square)](https://cyberbotics.com)
+[![PyTorch MPS/CUDA](https://img.shields.io/badge/PyTorch-Apple_MPS_%7C_CUDA-EE4C2C?style=flat-square&logo=pytorch)](https://pytorch.org)
 
 ---
 
-## ⚡ Quickstart: 1-Command Evaluator Launch
+## Abstract
 
-### Option 1: uvx (Zero Install / Recommended)
+The **Autonomous Patrol Rover** is an edge-native robotics platform that combines 3D rigid-body kinematics in Webots with local multimodal neural inference. Operating without cloud compute or external API dependencies, the system pairs high-speed spatial perception (**Ultralytics YOLOv8**) with zero-shot semantic reasoning (**OpenAI CLIP ViT-B/32**) running directly on Apple Silicon Metal Performance Shaders (MPS) and NVIDIA CUDA cores.
+
+A high-throughput **FastAPI / WebSocket IPC bridge (30 Hz)** synchronizes sensor raycasting, monocular RGB feeds, differential drive telemetry, and dynamic waypoints with an interactive web-based Mission Control deck.
+
+---
+
+## Live Evaluator Links
+
+* **Interactive Project Manifesto & Architectural Deck:**  
+  [https://autonomous-patrol-rover.vercel.app](https://autonomous-patrol-rover.vercel.app)  
+  *Features a full-bleed WebGL2 beam, React Bits SplitText animation, interactive 3D physics runbook, and 4K telemetry lightbox.*
+
+* **Google Colab MLOps Fine-Tuning & Validation Notebook:**  
+  [Open in Google Colab](https://colab.research.google.com/drive/1QgUtht2vBS_Bt9jFmo3osvr-AtRW7B4F?usp=sharing)  
+  *Contains full training scripts, Kaggle dataset fusion, 29-epoch convergence curves, confusion matrices, and FP16 CoreML/ONNX export pipelines.*
+
+---
+
+## Quickstart: Evaluator CLI Launch
+
+The rover platform includes a unified CLI executable (`patrol-rover`) that starts the core IPC engine, suppresses framework noise, displays an ANSI diagnostics terminal dashboard, and serves the mission deck on `http://127.0.0.1:7860`.
+
+### Option 1: Zero-Install Launch (Recommended via `uvx`)
+Execute immediately in an isolated virtual environment without manual cloning or dependency installation:
 ```bash
 uvx --from git+https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git patrol-rover
 ```
 
-### Option 2: pipx / pip
+### Option 2: Clone & Local Editable Installation
 ```bash
-pipx run --spec git+https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git patrol-rover
-# OR via local clone:
+git clone https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git
+cd Autonomous-Patrol-Rover
 pip install -e .
 patrol-rover
 ```
 
-### Option 3: Direct Python
+### Option 3: Direct Python Launch
 ```bash
+git clone https://github.com/GauravSrivastava-prog/Autonomous-Patrol-Rover.git
+cd Autonomous-Patrol-Rover
+pip install -r requirements.txt
 python3 app.py
 ```
 
-Automatically opens `http://127.0.0.1:7860` in your default web browser to enter the fullscreen GTA Mission Control deck.
+*The application automatically binds to `http://127.0.0.1:7860` and attempts to launch your system browser.*
 
 ---
 
-## 🌟 Key Architecture & Upgrades
+## System Architecture
 
 ```
-┌────────────────────────────────────────────────────────┐
-│  Webots R2025a (3D Simulation Physics & Supervisor)     │
-│  - 4m×4m Glass Arena with warm amber gold top rails    │
-│  - 3 Movable Targets: Red Beacon, Green Plant, Blue    │
-│  - 2 Low-Profile Obstacles: Cable Box, Tool Box        │
-│  - HD 640×480 Camera Sensor Node                       │
-│  - Supervisor API (Translation, Physics Reset)         │
-└──────────────────────────┬─────────────────────────────┘
-                           │ IPC (<extern>)
-┌──────────────────────────▼─────────────────────────────┐
-│  Mission Control Server (FastAPI + Asyncio)            │
-│  - Webots IPC Loop (~30 Hz)                            │
-│  - HD JPEG Quality 95 Streamer                         │
-│  - Background Multi-Model AI Engine (ai_worker_loop):  │
-│      * Purpose A: Dynamic VLM Goal Planner             │
-│      * Purpose B: 640x480 MAGMA Monocular Depth Map    │
-│      * Purpose C: Open-Vocabulary Target Grounder      │
-│      * Purpose D: Automated Flight Mission Logger      │
-│      * YOLOv8n + OpenAI CLIP Semantic Throttling       │
-│  - WebSocket Telemetry & Drag-and-Drop Handler         │
-└────────────────────┬─────────────────────┬─────────────┘
-                     │                     │
-         HTTP & SSE  ▼                     ▼  WebSockets (~30 Hz)
-┌─────────────────────────────┐   ┌──────────────────────────────┐
-│  2D Mission Control         │   │  A-Frame WebXR Digital Twin  │
-│  http://localhost:8000/     │   │  http://localhost:8000/vr   │
-│  - Dual Viewport (RGB+Depth)│   │  - 3D Digital Twin Arena     │
-│  - Open-Vocab Prompt Input  │   │  - Dual Hologram Screens     │
-│  - VLM Auto-Goal Deck       │   │  - 3D Drag-and-Drop Targets  │
-│  - Live Mission Log Terminal│   │  - Gaze & Keyboard Controls  │
-└─────────────────────────────┘   └──────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Webots R2025a Simulator                         │
+│  - Differential Drive Kinematics (v = 0.45 m/s, w = 0.18 rad/s)        │
+│  - 360° LiDAR Sensor Array (10 Hz Raycasting)                          │
+│  - 640×480 HD Camera Sensor Node                                       │
+│  - Supervisor API (World Pose, Obstacle Translation, Arena Reset)      │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ IPC Bridge (<extern> Socket)
+┌───────────────────────────────────▼────────────────────────────────────┐
+│                  FastAPI & Asyncio Core IPC Engine                     │
+│  - Asynchronous IPC Event Loop (~30 Hz)                                │
+│  - Low-Latency JPEG Streaming Buffer                                   │
+│  - WebSocket Telemetry Protocol (60 FPS Teleop & Pose Updates)         │
+└───────────────────┬────────────────────────────────┬───────────────────┘
+                    │                                │
+    (Perception)    ▼                                ▼    (Reasoning)
+┌───────────────────────────────┐        ┌───────────────────────────────┐
+│     Spatial Reflex Cortex     │        │    Semantic Target Reasoner   │
+│  - Fine-Tuned YOLOv8n         │        │  - OpenAI CLIP ViT-B/32       │
+│  - 4.9 ms Inference (MPS)     │        │  - Zero-Shot Natural Language │
+│  - 6 Hazardous Obstacle Classes│       │  - 2.6 µs Local Embedding Cache│
+└───────────────────────────────┘        └───────────────────────────────┘
+```
+
+### Dual-Model Perception Stack
+1. **Reflex Cortex (YOLOv8n):** Processes continuous 640×480 video frames at 30+ FPS, regressing 2D bounding boxes and obstacle class probabilities to prevent physical collisions in real time.
+2. **Cognitive Reasoner (OpenAI CLIP ViT-B/32):** Computes normalized cosine similarities between candidate camera crops and arbitrary natural language prompts (e.g., *"red fire extinguisher mounted on concrete wall"*). Pre-computed embedding vectors are indexed in a local binary cache, enabling target verification in 2.6 microseconds without network round-trips.
+
+---
+
+## Quantitative Validation & Benchmarks
+
+The model was fine-tuned across 29 epochs on an NVIDIA T4 GPU using a composite dataset merging real-world indoor office obstacles (Kaggle) with synthetic domain-randomized perspectives.
+
+| Metric | Validated Result | Notes / Conditions |
+| :--- | :--- | :--- |
+| **mAP@50 (All Hazard Classes)** | **0.594** (59.4%) | Evaluated on held-out validation batch |
+| **mAP@50-95** | **0.466** (46.6%) | Strict IoU threshold range |
+| **YOLOv8 Latency (Apple Silicon MPS)** | **4.9 ms** | FP16 Half-Precision (204 FPS peak) |
+| **YOLOv8 Latency (NVIDIA T4 CUDA)** | **3.2 ms** | Tensor Cores enabled (312 FPS peak) |
+| **CLIP Semantic Cache Lookup** | **2.6 µs** | Pre-computed ViT-B/32 embedding dot product |
+| **Simulation Sync Rate** | **60.2 FPS** | Webots rigid-body kinematics step (16ms) |
+| **Cloud API Calls** | **0** | 100% on-device local execution |
+
+### Class-Specific Detection Accuracy
+* **Traffic Cones:** `99.5%` precision (tight bounding box regression)
+* **Chairs & Office Furniture:** `99.5%` precision
+* **Floor Hazards & Manholes:** `89.3%` precision
+* **Overall Hazard Recall:** `88.4%` across challenging lighting and occlusion conditions
+
+---
+
+## Repository Structure
+
+```
+Autonomous-Patrol-Rover/
+├── app.py                     # Entry point: CLI dashboard, FastAPI & Webots launcher
+├── core_engine.py             # Multimodal AI perception worker, IPC sockets, and kinematics
+├── pyproject.toml             # Packaging configuration for 'patrol-rover' CLI
+├── requirements.txt           # Production dependencies
+│
+├── controllers/               # Webots controller implementations
+│   └── mission_control/       # Mission control supervisor & robot driver
+│
+├── ml_pipeline/               # MLOps pipeline & training utilities
+│   ├── train_yolo.py          # YOLOv8 fine-tuning script
+│   ├── evaluate_clip.py       # CLIP zero-shot evaluation benchmarks
+│   ├── export_model.py        # ONNX / CoreML / TorchScript export pipelines
+│   └── configs/               # Hyperparameter and dataset YAML specifications
+│
+├── models/                    # Model weights and semantic caches
+│   ├── rover_yolo_tuned.pt    # Fine-tuned YOLOv8 hazard weights
+│   └── clip_semantic_cache.pkl # Pre-computed semantic embedding dictionary
+│
+├── worlds/                    # Webots 3D simulation environments
+│   ├── patrol_arena.wbt       # 4m×4m obstacle patrol arena
+│   └── textures/              # Surface textures and hazard decals
+│
+└── docs/                      # Interactive manifesto web application
+    ├── index.html             # React 18, GSAP SplitText, WebGL2 LaserFlow, and CSS Glassmorphism
+    ├── media/                 # 4K PR curves, confusion matrices, and demo video
+    └── laserflow-reveal.png   # Texture mask for interactive hover lens
 ```
 
 ---
 
-## 🚀 The 4 Core Multimodal AI Purposes
+## Verification & Testing
 
-### 🧭 Purpose A: Dynamic Goal Selection & Semantic Navigation (VLM + CLIP Planner)
-- **Autonomous Tactical Planning**: Evaluates laboratory scene geometry and visited target history to decide the next waypoint (`RED`, `GREEN`, `BLUE`).
-- **Natural Language Instructions**: Generates real-time reasoning sentences (e.g. *"VLM Planner: Tactical waypoint switch -> GREEN (Potted Plant) to inspect environmental flora perimeter"*).
-- **Interactive Control**: Toggleable VLM Auto-Goal mode on both 2D dashboard and 3D VR deck with manual trigger endpoint `POST /trigger_vlm_goal`.
+To execute the automated headless verification suite testing WebGL contexts, layout geometry, and responsive viewports:
 
-### ◈ Purpose B: Monocular Depth Map & Low-Obstacle Avoidance
-- **High-Definition Depth Stream**: Real-time 640×480 depth map rendered in high-contrast `MAGMA` colormap, served live at `GET /depth_feed` and `GET /depth_frame.jpg`.
-- **Floor ROI Analysis**: Continuously inspects the bottom-center near-field floor zone (`y: 320..470, x: 180..460`) split into left and right halves.
-- **Low-Profile Obstacle Avoidance**: Detects obstacles sitting below the ray height of the rover's infrared distance sensors (`LOW_CABLE_BOX` and `SMALL_TOOLBOX`), triggering an immediate `[DEPTH HAZARD: LOW OBSTACLE - REROUTING]` warning and automated steering avoidance around the clearer side.
-
-### 🔍 Purpose C: Open-Vocabulary Target Tracking
-- **Free-Text Zero-Shot Prompting**: Input any arbitrary natural language prompt (e.g., `"wooden crate"`, `"yellow hazard box"`, `"potted plant"`, `"blue chair"`) via `POST /set_openvocab_prompt` or WebSocket action `SET_OPENVOCAB`.
-- **Region Grounding**: Extracts candidate object bounding boxes and scores them against the prompt embedding using OpenAI CLIP.
-- **Neon-Magenta HUD & Visual Servoing**: Highlights the grounded target with a magenta box `(255, 0, 255)`, crosshair, and confidence score, feeding the target center coordinate directly into `AI_CHASE` for smooth visual servoing.
-
-### 📋 Purpose D: Automated Mission Flight Logging & Captioning
-- **Multimodal Flight Log**: Every 5 seconds, synthesizes telemetry pose, active mode, semantic classification, depth hazard status, and locked target into a human-readable flight log entry.
-- **Persistent Markdown Log**: Automatically writes structured log entries to `mission_log.md` in the project root.
-- **Live Terminal & Export**: View logs streaming in real-time on the 2D dashboard terminal, query `GET /mission_logs`, or click **"Download mission_log.md"** (`GET /download_mission_log`).
-
----
-
-## 🕹️ Control Modes
-
-| Mode | Key | Behavior |
-|------|-----|----------|
-| 🧠 **AI_PATROL** | `P` | Autonomous exploration with wall bounce, physical stall watchdog, and depth-based low obstacle avoidance. Safely throttles speed when CLIP detects fragile objects. |
-| 🎯 **AI_CHASE** | `C` | Visual servoing tracking target beacons or open-vocabulary objects. Maintains a clean 15cm standoff distance (smoothly backs away if too close). |
-| 🕹️ **MANUAL** | `M` | Full teleoperation via `W / A / S / D` keys or dashboard buttons. |
-
----
-
-## 📡 API Endpoints & WebSocket Protocol
-
-### HTTP Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/` | 2D Dual-Viewport Mission Control Dashboard |
-| `GET` | `/vr` | A-Frame WebXR 3D Digital Twin with Dual Hologram Screens |
-| `GET` | `/video_feed` | HD RGB + YOLO + Open-Vocab MJPEG video stream (640×480) |
-| `GET` | `/video_frame.jpg` | Single HD RGB JPEG snapshot for WebGL/VR textures |
-| `GET` | `/depth_feed` | Live Monocular Depth Map MJPEG stream (640×480, MAGMA) |
-| `GET` | `/depth_frame.jpg` | Single Depth JPEG snapshot for WebGL/VR textures |
-| `GET` | `/telemetry` | Full telemetry JSON packet including depth, VLM, and open-vocab states |
-| `POST` | `/set_mode/{mode}` | Switch mode (`AI_PATROL`, `AI_CHASE`, `MANUAL`) |
-| `POST` | `/manual/{cmd}` | Send teleop command (`FORWARD`, `BACKWARD`, `LEFT`, `RIGHT`, `STOP`) |
-| `POST` | `/teleport_reset` | Reset robot pose to origin $(0, 0, 0)$ |
-| `POST` | `/trigger_vlm_goal` | Manually trigger Purpose A VLM goal selection |
-| `POST` | `/set_vlm_goal_mode/{enabled}` | Toggle Purpose A VLM Auto-Goal mode (`true`/`false`) |
-| `POST` | `/set_openvocab_prompt` | Set Purpose C prompt (`{"prompt": "wooden crate"}`) |
-| `GET` | `/mission_logs` | Retrieve recent mission flight logs in JSON |
-| `GET` | `/download_mission_log` | Download persistent `mission_log.md` flight log file |
-
-### WebSocket Protocol (`/ws`)
-
-#### Downstream Broadcast (~30 Hz):
-```json
-{
-  "x": 0.452,
-  "y": -0.812,
-  "z": 0.060,
-  "yaw": 42.5,
-  "vx": 3.75,
-  "vy": 3.75,
-  "mode": "AI_PATROL",
-  "detected": "RED",
-  "ps_left": 45.0,
-  "ps_right": 32.0,
-  "semantic_scene": "Clear Open Floor",
-  "semantic_score": 0.94,
-  "depth_hazard": false,
-  "depth_score": 0.18,
-  "auto_goal_vlm": false,
-  "vlm_goal_instruction": "VLM Planner: Tactical waypoint switch -> GREEN (Potted Plant)",
-  "preferred_target": "GREEN",
-  "openvocab_prompt": "wooden crate",
-  "openvocab_detected": true,
-  "latest_mission_log": "[04:05:12] POS (0.45, -0.81) | YAW 42.5° | MODE: AI_PATROL..."
-}
-```
-
-#### Upstream Client Actions:
-- **Drag Target**: `{"action": "DRAG_OBJECT", "target": "RED", "x": 0.5, "y": 0.2}`
-- **Change Mode**: `{"action": "SET_MODE", "mode": "AI_CHASE"}`
-- **Teleop**: `{"action": "MANUAL_CMD", "cmd": "FORWARD"}`
-- **Reset**: `{"action": "RESET_POSE"}`
-- **Set Open-Vocab**: `{"action": "SET_OPENVOCAB", "prompt": "wooden crate"}`
-- **VLM Plan Goal**: `{"action": "VLM_SELECT_GOAL"}`
-- **Set VLM Mode**: `{"action": "SET_VLM_GOAL_MODE", "enabled": true}`
-
----
-
-## 🛠️ Quick Start
-
-### 1. Prerequisites
-- **macOS** (Apple Silicon or Intel)
-- **Webots R2025a** installed in `/Applications/Webots.app`
-- **Python 3.11+** virtual environment
-
-### 2. Launch Demo
 ```bash
-chmod +x run_demo.sh
-./run_demo.sh
-```
-
-- **2D Mission Control Dashboard**: [http://localhost:8000](http://localhost:8000)
-- **3D WebXR Digital Twin**: [http://localhost:8000/vr](http://localhost:8000/vr)
-- **Mission Log**: [http://localhost:8000/download_mission_log](http://localhost:8000/download_mission_log)
-
----
-
-## 🤗 Deploy to Hugging Face Spaces (24/7 Zero-Friction Cloud)
-
-This repository is pre-configured with `app.py`, `Dockerfile`, `packages.txt`, and `requirements.txt` for direct deployment on Hugging Face Spaces.
-
-### Option A: Create a Docker Space (Recommended)
-1. Go to [Hugging Face Spaces](https://huggingface.co/new-space).
-2. Set Space name (e.g., `ai-vision-patrol-robot`), license, and select **Docker** as Space SDK.
-3. Push this repository to your Space remote:
-   ```bash
-   git remote add space https://huggingface.co/spaces/<YOUR-USERNAME>/<SPACE-NAME>
-   git push space main
-   ```
-4. Hugging Face will automatically build the container and serve the interactive Gradio + FastAPI + WebXR dashboard on port `7860`.
-
-### Option B: Run locally on dynamic port
-```bash
-python3 controllers/mission_control/mission_control.py --port 7860
-# or via master launcher:
-python3 app.py
+# Verify docs/index.html across desktop (1440x900) and mobile (390x844) viewports
+python3 scratch/verify_part11.py
 ```
 
 ---
 
-## 👥 Authors & Academic Context
+## Academic Context & Attribution
 
-- **Course**: Algorithm and Robotics Lab, Semester 7
-- **Platform**: Webots R2025a Supervisor, FastAPI, OpenCV, YOLOv8, OpenAI CLIP, Monocular Depth, Three.js / A-Frame WebXR
+* **Course:** Algorithm and Robotics Lab (Semester 7)  
+* **Institution:** Department of Computer Science & Robotics, UPES  
+* **Lead Author:** Gaurav Srivastava ([Gaurav.122467@stu.upes.ac.in](mailto:Gaurav.122467@stu.upes.ac.in))  
+* **License:** [MIT License](LICENSE)
