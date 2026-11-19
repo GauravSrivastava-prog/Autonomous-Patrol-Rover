@@ -72,11 +72,13 @@
       pointer-events: none;
     }
 
-        /* Full-Bleed 100vw Hero Styling */
+        /* Full-Bleed 100vw Hero Styling (Flush-Mounted to Seam with 0px Gap) */
     .laser-hero {
       position: relative;
       width: 100%;
-      min-height: 100vh;
+      min-height: auto;
+      padding-bottom: 0 !important;
+      margin-bottom: 0 !important;
       overflow: hidden;
     }
     .laser-hero__layer {
@@ -109,15 +111,17 @@
        Part 10: Foggy Glassmorphism, Luminous Horizontal Seam & Full-Page Bloom
        ───────────────────────────────────────────────────────────────────────────── */
 
-    /* Full-width container wrapping everything below Hero */
+    /* Full-width container wrapping everything below Hero (Flush with 0px Gap & Upward Bleed) */
     .manifesto-fog-shell {
       position: relative;
       width: 100%;
       overflow: hidden;
-      border-top: 1px solid rgba(120, 148, 255, 0.28);
+      border-top: 1px solid rgba(120, 148, 255, 0.32);
+      box-shadow: 0 -12px 40px rgba(56, 71, 255, 0.25);
+      margin-top: 0 !important;
     }
 
-    /* Crisp, glowing top boundary seam with bright white-blue central peak at 50% */
+    /* Crisp, glowing top boundary seam with bright white-blue core line synchronized to beam impact and spill zones */
     .manifesto-fog-shell::before {
       content: "";
       position: absolute;
@@ -128,14 +132,18 @@
       background: linear-gradient(
         90deg,
         transparent 0%,
-        rgba(120, 148, 255, 0.08) 15%,
-        rgba(160, 190, 255, 0.4) 34%,
-        rgba(220, 232, 255, 0.95) 50%,
-        rgba(160, 190, 255, 0.4) 66%,
-        rgba(120, 148, 255, 0.08) 85%,
+        rgba(56, 71, 255, 0.12) 8%,
+        rgba(140, 175, 255, 0.65) max(8%, calc(50% - 460px)),  /* Left card spill edge */
+        rgba(79, 70, 229, 0.35) calc(50% - 200px),
+        rgba(180, 215, 255, 0.85) calc(50% - 60px),
+        rgba(255, 255, 255, 1.0) 50%,                          /* Central beam impact */
+        rgba(180, 215, 255, 0.85) calc(50% + 60px),
+        rgba(79, 70, 229, 0.35) calc(50% + 200px),
+        rgba(140, 175, 255, 0.65) min(92%, calc(50% + 460px)), /* Right card spill edge */
+        rgba(56, 71, 255, 0.12) 92%,
         transparent 100%
       );
-      box-shadow: 0 0 12px rgba(180, 210, 255, 0.6), 0 0 24px rgba(56, 71, 255, 0.4);
+      box-shadow: 0 0 16px rgba(220, 235, 255, 0.85), 0 0 32px rgba(56, 71, 255, 0.55);
       pointer-events: none;
       z-index: 20;
     }
@@ -147,10 +155,59 @@
       top: 0;
       left: 0;
       right: 0;
-      height: 180px;
-      background: radial-gradient(ellipse 55% 100% at 50% 0%, rgba(56, 71, 255, 0.35), transparent 75%);
+      height: 220px;
+      background:
+        radial-gradient(ellipse 50% 100% at 50% 0%, rgba(56, 71, 255, 0.42), transparent 75%),
+        radial-gradient(ellipse 26% 80% at max(10%, calc(50% - 460px)) 0%, rgba(79, 70, 229, 0.28), transparent 70%),
+        radial-gradient(ellipse 26% 80% at min(90%, calc(50% + 460px)) 0%, rgba(79, 70, 229, 0.28), transparent 70%);
       pointer-events: none;
       z-index: 5;
+    }
+
+    /* Part 11: Matching Atmospheric Hover Lens Layer Across Lower Glassmorphism */
+    .manifesto-cursor-lens {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      opacity: var(--lens-opacity, 0);
+      transition: opacity 0.35s ease-out;
+      will-change: opacity;
+      background:
+        /* Crisp inner lens highlight (160px radius) */
+        radial-gradient(
+          160px circle at var(--mx, 50%) var(--my, 50%),
+          rgba(180, 205, 255, 0.14) 0%,
+          transparent 100%
+        ),
+        /* Soft outer cobalt halo (420px radius) */
+        radial-gradient(
+          420px circle at var(--mx, 50%) var(--my, 50%),
+          rgba(56, 71, 255, 0.16) 0%,
+          transparent 100%
+        );
+    }
+
+    /* Subtle masked reveal texture matching Hero laser lens */
+    .manifesto-cursor-lens::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: url('./laserflow-reveal.png');
+      background-repeat: repeat;
+      background-size: 800px;
+      opacity: 0.35;
+      -webkit-mask-image: radial-gradient(
+        240px circle at var(--mx, 50%) var(--my, 50%),
+        rgba(0, 0, 0, 0.45) 0%,
+        transparent 75%
+      );
+      mask-image: radial-gradient(
+        240px circle at var(--mx, 50%) var(--my, 50%),
+        rgba(0, 0, 0, 0.45) 0%,
+        transparent 75%
+      );
+      pointer-events: none;
     }
 
     /* Dedicated Background Bloom Layer spanning entire lower page height below footer */
@@ -4033,6 +4090,7 @@ const Folder = ({
       const [folderSize, setFolderSize] = useState(() => (typeof window !== "undefined" && window.innerWidth < 640 ? 1.0 : 1.25));
 
       const heroCardRef = useRef(null);
+      const fogShellRef = useRef(null);
       const cardRef0 = heroCardRef;
       const cardRef1 = useRef(null);
       const cardRef2 = useRef(null);
@@ -4109,6 +4167,51 @@ const Folder = ({
         return () => window.removeEventListener("keydown", handleKeyDown);
       }, [stage, lightboxImage]);
 
+      // ── Part 11: Lower-Page Mouse Hover Lens Listener (Passive + rAF Gate, Zero React Rerenders) ──
+      useEffect(() => {
+        const shell = fogShellRef.current;
+        if (!shell || coarse) return;
+
+        let rafId = 0;
+        let latestX = 0;
+        let latestY = 0;
+        let scheduled = false;
+
+        const onPointerMove = (e) => {
+          const rect = shell.getBoundingClientRect();
+          latestX = Math.round(e.clientX - rect.left);
+          latestY = Math.round(e.clientY - rect.top);
+
+          if (!scheduled) {
+            scheduled = true;
+            rafId = requestAnimationFrame(() => {
+              shell.style.setProperty('--mx', `${latestX}px`);
+              shell.style.setProperty('--my', `${latestY}px`);
+              scheduled = false;
+            });
+          }
+        };
+
+        const onPointerEnter = () => {
+          shell.style.setProperty('--lens-opacity', '1');
+        };
+
+        const onPointerLeave = () => {
+          shell.style.setProperty('--lens-opacity', '0');
+        };
+
+        shell.addEventListener('pointermove', onPointerMove, { passive: true });
+        shell.addEventListener('pointerenter', onPointerEnter, { passive: true });
+        shell.addEventListener('pointerleave', onPointerLeave, { passive: true });
+
+        return () => {
+          cancelAnimationFrame(rafId);
+          shell.removeEventListener('pointermove', onPointerMove);
+          shell.removeEventListener('pointerenter', onPointerEnter);
+          shell.removeEventListener('pointerleave', onPointerLeave);
+        };
+      }, [coarse]);
+
       return (
         <div className="min-h-screen bg-[#0b0b0e] text-slate-200 flex flex-col items-center justify-start relative text-left overflow-x-hidden">
           
@@ -4130,8 +4233,8 @@ const Folder = ({
             </button>
           )}
 
-          {/* ── FULL-BLEED 100vw HERO SECTION (No Side Dead Margins — Unmodified LaserFlow Canvas Spans Full Screen) ── */}
-          <section className="laser-hero relative w-full min-h-screen flex flex-col items-center justify-start pt-6 pb-12 px-4 sm:px-8 overflow-hidden z-10">
+          {/* ── FULL-BLEED 100vw HERO SECTION (Flush-Mounted to Seam with 0px Gap) ── */}
+          <section className="laser-hero relative w-full flex flex-col items-center justify-start pt-6 pb-0 px-4 sm:px-8 overflow-hidden z-10">
             {/* Full-Bleed 100vw LaserFlow Layer */}
             {webgl2 ? (
               <div className="laser-hero__layer absolute inset-0 w-full h-full pointer-events-none z-0 overflow-hidden">
@@ -4142,9 +4245,9 @@ const Folder = ({
                   color="#3847ff"
                   intensity={phone ? 1.5 : 1.8}
                   beamWidth={phone ? 1.2 : 1.5}
-                  flare={phone ? 1.2 : 1.5}
-                  spread={phone ? 1.2 : 1.5}
-                  spill={1.0}
+                  flare={phone ? 1.2 : 1.6}
+                  spread={phone ? 1.2 : 1.6}
+                  spill={phone ? 1.2 : 1.5}
                   fog={0.2}
                   dust={1.6}
                   streaks={1.5}
@@ -4166,7 +4269,7 @@ const Folder = ({
             )}
 
             {/* Centered Inner Content Wrapper floating above full-bleed layer */}
-            <div className="relative z-10 w-full max-w-[960px] mx-auto flex flex-col items-center">
+            <div className="relative z-10 w-full max-w-[960px] mx-auto flex flex-col items-center pb-0 mb-0">
               
               {/* ── HERO HEADER SECTION ── */}
               <div className="flex flex-col items-center text-center pt-4 pb-6 px-4">
@@ -4186,7 +4289,7 @@ const Folder = ({
               <section
                 id="card-hero"
                 ref={heroCardRef}
-                className="w-full rounded-2xl shadow-2xl border border-white/10 overflow-hidden bg-[#0d0d0d] ambient-card-glow transition-all duration-300"
+                className="w-full rounded-2xl shadow-2xl border border-white/10 overflow-hidden bg-[#0d0d0d] ambient-card-glow transition-all duration-300 mb-0"
               >
                 <TerminalCard />
                 
@@ -4210,7 +4313,10 @@ const Folder = ({
           </section>
 
           {/* ── LOWER CONTENT WRAPPER WITH FOGGY GLASSMORPHISM & LUMINOUS HORIZONTAL SEAM ── */}
-          <div className="manifesto-fog-shell relative w-full overflow-hidden">
+          <div
+            ref={fogShellRef}
+            className="manifesto-fog-shell relative w-full overflow-hidden"
+          >
             {/* Full-Page Dedicated Background Bloom Layer */}
             <div className="manifesto-bloom-layer" aria-hidden="true">
               <div className="manifesto-bloom manifesto-bloom--telemetry" />
@@ -4219,6 +4325,9 @@ const Folder = ({
               <div className="manifesto-bloom manifesto-bloom--runbook" />
               <div className="manifesto-bloom manifesto-bloom--footer" />
             </div>
+
+            {/* Part 11: Interactive Mouse Hover Lens Overlay Across Glassmorphic Surface */}
+            <div className="manifesto-cursor-lens" aria-hidden="true" />
 
             {/* Frosted Atmospheric Content Overlay */}
             <div className="manifesto-fog-content relative z-10 w-full flex flex-col items-center">
