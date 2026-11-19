@@ -1,7 +1,7 @@
 # Autonomous Patrol Rover
 
 > **Real-Time Edge AI Vision, 3D Robotics Kinematics & Multimodal Telemetry Platform**  
-> *Course Project • Algorithm and Robotics Lab • Department of Computer Science & Robotics, UPES*
+> *Course Project • Algorithm and Robotics Lab • UPES*
 
 [![Interactive Manifesto](https://img.shields.io/badge/Live_Manifesto-Vercel_Production-00f0ff?style=flat-square&logo=vercel)](https://autonomous-patrol-rover.vercel.app)
 [![MLOps Training Pipeline](https://img.shields.io/badge/Google_Colab-MLOps_Pipeline-F9AB00?style=flat-square&logo=googlecolab)](https://colab.research.google.com/drive/1QgUtht2vBS_Bt9jFmo3osvr-AtRW7B4F?usp=sharing)
