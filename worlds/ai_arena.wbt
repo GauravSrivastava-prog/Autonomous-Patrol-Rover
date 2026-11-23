@@ -511,7 +511,7 @@ DEF WALL_WEST_RAIL Solid {
   name "wall_west_rail"
 }
 DEF RED_TARGET Solid {
-  translation 0.9 0.7 0
+  translation 1.15 1 0
   children [
     DEF CONE_BASE Shape {
       appearance PBRAppearance {
@@ -586,7 +586,7 @@ DEF RED_TARGET Solid {
   }
 }
 DEF GREEN_TARGET Solid {
-  translation -0.8 0.8 0
+  translation -1.05 1.05 0
   children [
     Pose {
       translation 0 0 0.08
@@ -709,7 +709,7 @@ DEF GREEN_TARGET Solid {
   }
 }
 DEF BLUE_TARGET Solid {
-  translation 0 -0.9 0
+  translation 0 -1.15 0
   children [
     Pose {
       translation -0.1 0.1 0.12
@@ -848,7 +848,7 @@ DEF BLUE_TARGET Solid {
   }
 }
 DEF CRATE1 Solid {
-  translation 1.6 1.6 0.1
+  translation -1.15 -0.95 0.1
   children [
     Shape {
       appearance PBRAppearance {
@@ -897,7 +897,7 @@ DEF CRATE1 Solid {
   }
 }
 DEF CRATE2 Solid {
-  translation -1.55 -1.55 0.1
+  translation 1.15 -0.95 0.1
   children [
     Shape {
       appearance PBRAppearance {
@@ -945,8 +945,8 @@ DEF CRATE2 Solid {
     size 0.22 0.22 0.18
   }
 }
-DEF LOW_CABLE_BOX Solid {
-  translation 0.35 -0.25 0.018
+DEF HAZARD Solid {
+  translation 0.85 0.15 0.19
   children [
     Shape {
       appearance PBRAppearance {
@@ -955,11 +955,11 @@ DEF LOW_CABLE_BOX Solid {
         metalness 0.1
       }
       geometry Box {
-        size 0.28 0.14 0.035
+        size 0.36 0.36 0.38
       }
     }
     Pose {
-      translation 0 0 0.018
+      translation 0 0 0.195
       children [
         Shape {
           appearance PBRAppearance {
@@ -968,54 +968,20 @@ DEF LOW_CABLE_BOX Solid {
             metalness 0.2
           }
           geometry Box {
-            size 0.26 0.035 0.002
+            size 0.32 0.08 0.01
           }
         }
       ]
     }
   ]
-  name "low_cable_box"
+  name "hazard"
   boundingObject Box {
-    size 0.28 0.14 0.035
-  }
-}
-DEF SMALL_TOOLBOX Solid {
-  translation -0.35 0.25 0.02
-  children [
-    Shape {
-      appearance PBRAppearance {
-        baseColor 0.92 0.42 0.08
-        roughness 0.45
-        metalness 0.15
-      }
-      geometry Box {
-        size 0.22 0.14 0.04
-      }
-    }
-    Pose {
-      translation 0 0 0.023
-      children [
-        Shape {
-          appearance PBRAppearance {
-            baseColor 0.2 0.22 0.25
-            roughness 0.35
-            metalness 0.6
-          }
-          geometry Box {
-            size 0.08 0.03 0.01
-          }
-        }
-      ]
-    }
-  ]
-  name "small_toolbox"
-  boundingObject Box {
-    size 0.22 0.14 0.04
+    size 0.36 0.36 0.38
   }
 }
 DEF ROVER Robot {
-  translation -0.18711652609251134 -1.133823440056162 0.05969787276719926
-  rotation 0.053628334850387906 -0.9517047865554806 0.30229455990566817 0.1148333290158494
+  translation 0 0 0.05
+  rotation 0 0 1 0.35
   children [
     DEF CHASSIS Shape {
       appearance PBRAppearance {

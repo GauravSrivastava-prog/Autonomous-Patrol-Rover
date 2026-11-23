@@ -45,6 +45,7 @@ import math
 import json
 import pickle
 import threading
+import collections
 from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -462,10 +463,10 @@ class RobotController:
     - True GTA 3rd-person chase camera rig (-20° pitch, 1.4m behind, 0.75m elevation).
     """
     WAYPOINTS: List[Tuple[float, float]] = [
-        (1.25, 1.25),
-        (-1.25, 1.25),
-        (-1.25, -1.25),
-        (1.25, -1.25),
+        (0.00, 1.25),
+        (-1.20, 0.10),
+        (-0.45, -0.25),
+        (0.10, 0.65),
     ]
 
     def __init__(self, init_perception: bool = True):
@@ -478,6 +479,12 @@ class RobotController:
         self.patrol_idx = 0
         self.standoff_dist = 0.55
         self.manual_cmd = "STOP"
+        self.escape_timer = 0.0
+        self.escape_cooldown = 0.0
+        self.escape_turn_sign = 1.0
+        self.pos_history = collections.deque(maxlen=35)
+        self.prev_ai_vl = 0.0
+        self.prev_ai_vr = 0.0
 
         # Frame buffers
         self.latest_rgb: bytes = b""
@@ -605,7 +612,12 @@ class RobotController:
             self.state.x, self.state.y, self.state.yaw = 0.0, 0.0, 0.35
             self.state.left_speed, self.state.right_speed = 0.0, 0.0
             self.state.trail.clear()
-            self.state.status_text = "Rover reset to origin (0, 0)"
+            self.state.status_text = "AI PATROL: WAYPOINT CRUISING" if self.state.mode == ControlMode.AI_PATROL else "Rover reset to origin (0, 0)"
+        self.escape_timer = 0.0
+        self.escape_cooldown = 0.0
+        self.pos_history.clear()
+        self.prev_ai_vl = 0.0
+        self.prev_ai_vr = 0.0
 
     # ── Simulation & Rendering Loop (30+ FPS) ──
     def _loop(self):
@@ -641,55 +653,136 @@ class RobotController:
             elif cmd == "RIGHT":    vl, vr = 2.90, -2.90
             else:                   vl, vr = 0.00, 0.00
 
-        # Mode 2: AI PATROL (Waypoint cruising with reactive pushaway)
+        # Mode 2: AI PATROL (Committed escape + smoothing + reactive obstacle/wall avoidance)
         elif mode == ControlMode.AI_PATROL:
+            now = time.time()
+            self.pos_history.append((now, rx, ry))
+            if self.escape_cooldown > 0.0:
+                self.escape_cooldown -= dt
+
             d_wall = ARENA_BOUND - max(abs(rx), abs(ry)) - ROVER_RADIUS
             d_obs = [
                 math.hypot(rx - obj.x, ry - obj.y) - obj.radius - ROVER_RADIUS
                 for obj in ARENA_OBJECTS.values()
             ]
-            min_dist = min(d_wall, min(d_obs))
+            min_obs = min(d_obs)
+            min_dist = min(d_wall, min_obs)
 
-            # Dynamic velocity modulation
-            if min_dist > 0.90:
-                base_speed = 4.80
-            elif min_dist <= 0.85:
-                ratio = max(0.0, min(1.0, (min_dist - 0.35) / 0.50))
-                base_speed = 2.20 + ratio * (3.40 - 2.20)
-            else:
-                base_speed = 3.60
+            # Check displacement over last ~0.8s (24 ticks)
+            disp = 1.0
+            if len(self.pos_history) >= 24:
+                disp = math.hypot(rx - self.pos_history[0][1], ry - self.pos_history[0][2])
 
-            wx, wy = self.WAYPOINTS[self.patrol_idx]
-            if math.hypot(wx - rx, wy - ry) < 0.40:
-                self.patrol_idx = (self.patrol_idx + 1) % len(self.WAYPOINTS)
+            # Trigger committed ESCAPE if stuck or wedged in corner/narrow gap
+            if self.escape_timer <= 0.0 and self.escape_cooldown <= 0.0:
+                is_stuck = (len(self.pos_history) >= 24 and disp < 0.08)
+                is_corner_wedged = (d_wall < 0.40 and min_obs < 0.28)
+                if is_stuck or is_corner_wedged:
+                    self.escape_timer = 1.5  # Committed 1.5s escape maneuver
+                    self.escape_cooldown = 2.5  # Hysteresis lock: cannot re-trigger for 2.5s
+                    # Pick the open corridor waypoint or center
+                    best_wp_idx = min(range(len(self.WAYPOINTS)), key=lambda i: math.hypot(self.WAYPOINTS[i][0] - rx, self.WAYPOINTS[i][1] - ry))
+                    self.patrol_idx = best_wp_idx
+                    wx, wy = self.WAYPOINTS[self.patrol_idx]
+                    escape_target_yaw = math.atan2(wy - ry, wx - rx)
+                    diff = (escape_target_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+                    self.escape_turn_sign = 1.0 if diff >= 0 else -1.0
+
+            if self.escape_timer > 0.0:
+                self.escape_timer -= dt
+                with self.state.lock:
+                    self.state.status_text = "AI PATROL: CORNER ESCAPE"
+
                 wx, wy = self.WAYPOINTS[self.patrol_idx]
+                escape_target_yaw = math.atan2(wy - ry, wx - rx)
+                diff = (escape_target_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
 
-            desired_yaw = math.atan2(wy - ry, wx - rx)
-            yaw_err = (desired_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+                if abs(diff) > 0.35:
+                    # Clean pivot toward open corridor
+                    vl_raw = -MAX_WHEEL_SPEED * self.escape_turn_sign
+                    vr_raw = MAX_WHEEL_SPEED * self.escape_turn_sign
+                else:
+                    # Smooth drive forward into open space
+                    vl_raw = 5.00
+                    vr_raw = 5.00
 
-            # Forward obstacle detection for steering
-            closest_fwd_obs = None
-            closest_fwd_dist = float('inf')
-            closest_lat = 0.0
-            for obj in ARENA_OBJECTS.values():
-                dx, dy = obj.x - rx, obj.y - ry
-                fwd = dx * math.cos(ryaw) + dy * math.sin(ryaw)
-                lat = -dx * math.sin(ryaw) + dy * math.cos(ryaw)
-                clearance = math.hypot(dx, dy) - obj.radius - ROVER_RADIUS
-                if fwd > 0 and clearance < 0.45 and clearance < closest_fwd_dist:
-                    closest_fwd_dist = clearance
-                    closest_fwd_obs = obj
-                    closest_lat = lat
-
-            if closest_fwd_obs is not None:
-                if closest_lat > 0:  # Obstacle on LEFT -> Steer RIGHT
-                    vl, vr = 3.90, 1.20
-                else:                # Obstacle on RIGHT -> Steer LEFT
-                    vl, vr = 1.20, 3.90
+                # Early exit if rover is clear of obstacles/walls and pointing towards target
+                if min_dist > 0.45 and abs(diff) < 0.30:
+                    self.escape_timer = 0.0
+                    self.pos_history.clear()
             else:
-                turn = max(-2.4, min(2.4, yaw_err * 2.2))
-                vl = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, base_speed - turn))
-                vr = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, base_speed + turn))
+                # Normal Waypoint Cruising & Obstacle Avoidance
+                wx, wy = self.WAYPOINTS[self.patrol_idx]
+                if math.hypot(wx - rx, wy - ry) < 0.45:
+                    self.patrol_idx = (self.patrol_idx + 1) % len(self.WAYPOINTS)
+                    wx, wy = self.WAYPOINTS[self.patrol_idx]
+
+                desired_yaw = math.atan2(wy - ry, wx - rx)
+                yaw_err = (desired_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+
+                # Forward obstacle detection for steering
+                closest_fwd_obs = None
+                closest_fwd_dist = float('inf')
+                closest_lat = 0.0
+                for obj in ARENA_OBJECTS.values():
+                    dx, dy = obj.x - rx, obj.y - ry
+                    fwd = dx * math.cos(ryaw) + dy * math.sin(ryaw)
+                    lat = -dx * math.sin(ryaw) + dy * math.cos(ryaw)
+                    clearance = math.hypot(dx, dy) - obj.radius - ROVER_RADIUS
+                    if fwd > 0 and clearance < 0.50 and clearance < closest_fwd_dist:
+                        closest_fwd_dist = clearance
+                        closest_fwd_obs = obj
+                        closest_lat = lat
+
+                # Forward wall clearance check
+                cos_y, sin_y = math.cos(ryaw), math.sin(ryaw)
+                wall_fwd_dists = []
+                if cos_y > 1e-4:
+                    wall_fwd_dists.append((ARENA_BOUND - ROVER_RADIUS - rx) / cos_y)
+                elif cos_y < -1e-4:
+                    wall_fwd_dists.append((-ARENA_BOUND + ROVER_RADIUS - rx) / cos_y)
+                if sin_y > 1e-4:
+                    wall_fwd_dists.append((ARENA_BOUND - ROVER_RADIUS - ry) / sin_y)
+                elif sin_y < -1e-4:
+                    wall_fwd_dists.append((-ARENA_BOUND + ROVER_RADIUS - ry) / sin_y)
+                fwd_wall_min = min(wall_fwd_dists) if wall_fwd_dists else float('inf')
+
+                if closest_fwd_obs is not None and closest_fwd_dist < 0.45:
+                    with self.state.lock:
+                        self.state.status_text = "AI PATROL: AVOIDING OBSTACLE"
+                    if closest_lat > 0:  # Obstacle on LEFT -> Steer RIGHT
+                        vl_raw, vr_raw = 4.20, 1.40
+                    else:                # Obstacle on RIGHT -> Steer LEFT
+                        vl_raw, vr_raw = 1.40, 4.20
+                elif fwd_wall_min < 0.45:
+                    with self.state.lock:
+                        self.state.status_text = "AI PATROL: AVOIDING OBSTACLE"
+                    # Steer away from wall toward center
+                    center_yaw = math.atan2(-ry, -rx)
+                    diff = (center_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+                    if diff > 0:
+                        vl_raw, vr_raw = 1.40, 4.20
+                    else:
+                        vl_raw, vr_raw = 4.20, 1.40
+                else:
+                    with self.state.lock:
+                        self.state.status_text = "AI PATROL: WAYPOINT CRUISING"
+
+                    if abs(yaw_err) > 0.50:  # Pivot in place toward waypoint if large heading error
+                        turn = 4.50 if yaw_err > 0 else -4.50
+                        vl_raw = -turn
+                        vr_raw = turn
+                    else:
+                        base_speed = 4.40 if min_dist > 0.70 else 3.20
+                        turn = max(-2.4, min(2.4, yaw_err * 2.5))
+                        vl_raw = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, base_speed - turn))
+                        vr_raw = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, base_speed + turn))
+
+            # Exponential Moving Average (EMA) low-pass smoothing on wheels to eliminate chatter
+            alpha = 0.40
+            vl = alpha * vl_raw + (1.0 - alpha) * self.prev_ai_vl
+            vr = alpha * vr_raw + (1.0 - alpha) * self.prev_ai_vr
+            self.prev_ai_vl, self.prev_ai_vr = vl, vr
 
         # Mode 3: AI CHASE & INSPECTION ORBIT
         elif mode == ControlMode.AI_CHASE:
@@ -891,15 +984,48 @@ class RobotController:
                 t_hit = min(t_hit, max(0.0, t_y))
 
             clamped_dist = max(min_arm, d_behind_max * t_hit)
-            cam_x = test_rx + clamped_dist * vx
-            cam_y = test_ry + clamped_dist * vy
+            raw_cam_x = test_rx + clamped_dist * vx
+            raw_cam_y = test_ry + clamped_dist * vy
+
+            pull_fraction = max(0.0, min(1.0, 1.0 - (clamped_dist - min_arm) / max(0.01, (d_behind_max - min_arm))))
+
+            # Smooth lateral shoulder offset along the wall toward the arena center
+            u_lat_x = -math.sin(ryaw)
+            u_lat_y = math.cos(ryaw)
+            dot_center = (-rx) * u_lat_x + (-ry) * u_lat_y
+            sign_lat = 1.0 if dot_center >= 0 else -1.0
+            lat_mag = 0.36 * pull_fraction
+
+            cam_x = raw_cam_x + sign_lat * lat_mag * u_lat_x
+            cam_y = raw_cam_y + sign_lat * lat_mag * u_lat_y
             cam_x = max(-c_bound, min(c_bound, cam_x))
             cam_y = max(-c_bound, min(c_bound, cam_y))
 
-            pull_fraction = max(0.0, min(1.0, 1.0 - (clamped_dist - min_arm) / max(0.01, (d_behind_max - min_arm))))
-            cam_z = 0.75 + 0.30 * pull_fraction  # elevates from 0.75m up to 1.05m
-            cam_yaw = ryaw
-            cam_pitch = math.radians(-20.0 - 8.0 * pull_fraction)  # tilts down to -28.0°
+            # Dynamic elevation: subtle raise (0.75m -> 0.79m)
+            cam_z = 0.75 + 0.04 * pull_fraction
+
+            # Look-at target on rover chassis
+            tgt_x = rx
+            tgt_y = ry
+            tgt_z = 0.05
+
+            dx = tgt_x - cam_x
+            dy = tgt_y - cam_y
+            dz = tgt_z - cam_z
+            d_xy = math.hypot(dx, dy)
+            look_pitch = math.atan2(dz, max(0.15, d_xy))
+
+            # Pitch aims at target + offset so rover sits in lower-middle viewport
+            target_pitch = look_pitch + math.radians(6.5)
+            target_pitch = max(math.radians(-48.0), min(math.radians(-20.0), target_pitch))
+
+            cam_pitch = (1.0 - pull_fraction) * math.radians(-20.0) + pull_fraction * target_pitch
+
+            # Smooth camera yaw blend towards rover target
+            aim_yaw = math.atan2(dy, dx)
+            yaw_diff = (aim_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+            cam_yaw = ryaw + pull_fraction * yaw_diff
+
             horizon_y = int(CAMERA_H / 2.0 + math.tan(cam_pitch) * FOCAL_LENGTH * 0.40)
         elif view_mode in ("TOP", "TOPDOWN"):
             # High-angle tactical overhead surveillance view
