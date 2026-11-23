@@ -19,6 +19,7 @@ import warnings
 import argparse
 import threading
 import webbrowser
+import socket
 from typing import Optional, Dict, Any, List
 
 # Suppress urllib3, OpenSSL, and runtime warnings
@@ -103,28 +104,38 @@ async def homebrew_telemetry_logger(request: Request, call_next):
     print(f"\033[1;36m==>\033[0m {tag} {method} {path}{query_str} \033[1;32m{status_icon} {status} OK\033[0m")
     return response
 
-# ── 30 FPS MJPEG Stream Generators ──
-def stream_mjpeg(feed_fn):
-    """Generates continuous multipart/x-mixed-replace MJPEG stream at ~30 FPS."""
+# ── 30 FPS MJPEG Stream Generators (Async & RFC-Compliant WebKit-Safe) ──
+async def stream_mjpeg(feed_fn):
+    """
+    Generates continuous RFC-compliant multipart/x-mixed-replace MJPEG stream at ~30 FPS.
+    Uses async sleep to eliminate AnyIO thread-pool starvation, and provides explicit
+    Content-Length headers and proper CRLF boundary delimiters for deterministic WebKit/Safari decoding.
+    """
     while True:
         data = feed_fn()
         if data:
-            yield (b"--frame\r\n"
-                   b"Content-Type: image/jpeg\r\n\r\n" + data + b"\r\n")
-        time.sleep(0.033)
+            header = (
+                b"\r\n--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Content-Length: " + str(len(data)).encode("ascii") + b"\r\n\r\n"
+            )
+            yield header + data + b"\r\n"
+        await asyncio.sleep(0.033)
 
 @api.get("/video_feed")
-def video_feed():
+async def video_feed():
     return StreamingResponse(
         stream_mjpeg(lambda: controller.latest_rgb),
-        media_type="multipart/x-mixed-replace; boundary=frame"
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
     )
 
 @api.get("/depth_feed")
-def depth_feed():
+async def depth_feed():
     return StreamingResponse(
         stream_mjpeg(lambda: controller.latest_depth),
-        media_type="multipart/x-mixed-replace; boundary=frame"
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
     )
 
 # ── Snapshot Endpoints ──
@@ -632,7 +643,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <button id="btnChase" class="pill-btn">🎯 AI Chase</button>
         <button id="btnManual" class="pill-btn">🕹️ Manual</button>
         <button id="btnReset" class="pill-btn">🔄 Reset (0,0)</button>
-        <a href="/landing" class="pill-btn" style="text-decoration:none; color:var(--accent); display:inline-flex; align-items:center;" target="_blank">📖 Manifesto</a>
+        <a href="https://autonomous-patrol-rover.vercel.app" class="pill-btn" style="text-decoration:none; color:var(--accent); display:inline-flex; align-items:center;" target="_blank" rel="noopener noreferrer">📖 Manifesto</a>
       </div>
 
       <div class="frosted search-box">
@@ -1098,6 +1109,75 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
     setTimeout(pollTelemetryFallback, 1000);
 
+    // ── Vision Feed Self-Healing Watchdog & Double-Buffered Polling Fallback ──
+    let isVisionPollingFallback = false;
+
+    function engageVisionPollingFallback() {
+      if (isVisionPollingFallback) return;
+      isVisionPollingFallback = true;
+      console.warn('⚡ [HUD] MJPEG stream stalled/unrendered. Activating double-buffered snapshot polling fallback.');
+
+      const rgbImg = document.getElementById('rgbFeed');
+      const depthImg = document.getElementById('depthFeed');
+
+      let busy = false;
+      function pollVisionStep() {
+        if (busy) return;
+        busy = true;
+        const now = Date.now();
+
+        let pending = 2;
+        const onFrameLoaded = () => {
+          pending--;
+          if (pending <= 0) {
+            busy = false;
+          }
+        };
+
+        if (rgbImg) {
+          const nextRgb = new Image();
+          nextRgb.onload = () => {
+            rgbImg.src = nextRgb.src;
+            onFrameLoaded();
+          };
+          nextRgb.onerror = onFrameLoaded;
+          nextRgb.src = '/video_frame.jpg?t=' + now;
+        } else {
+          onFrameLoaded();
+        }
+
+        if (depthImg) {
+          const nextDepth = new Image();
+          nextDepth.onload = () => {
+            depthImg.src = nextDepth.src;
+            onFrameLoaded();
+          };
+          nextDepth.onerror = onFrameLoaded;
+          nextDepth.src = '/depth_frame.jpg?t=' + now;
+        } else {
+          onFrameLoaded();
+        }
+      }
+
+      pollVisionStep();
+      setInterval(pollVisionStep, 40); // Smooth ~25 FPS polling fallback
+    }
+
+    // Attach immediate error and 1.5s unrendered detection
+    const rgbEl = document.getElementById('rgbFeed');
+    const depthEl = document.getElementById('depthFeed');
+    if (rgbEl) rgbEl.addEventListener('error', engageVisionPollingFallback);
+    if (depthEl) depthEl.addEventListener('error', engageVisionPollingFallback);
+
+    // Watchdog check at 1.5s: if images have not decoded (naturalWidth is 0), engage fallback
+    setTimeout(() => {
+      const rgbUnrendered = !rgbEl || rgbEl.naturalWidth === 0;
+      const depthUnrendered = !depthEl || depthEl.naturalWidth === 0;
+      if (rgbUnrendered || depthUnrendered) {
+        engageVisionPollingFallback();
+      }
+    }, 1500);
+
     // ── Event Handlers & Tactile D-Pad ──
     function initEvents() {
       document.getElementById('btnPatrol')?.addEventListener('click', () => window.setMode('AI_PATROL'));
@@ -1324,11 +1404,28 @@ def main():
     # Print zero-dependency ANSI boxed dashboard
     print_dashboard(args.host, args.port)
 
-    # Automatically launch mission control in evaluator's browser
+    # Automatically launch mission control in evaluator's browser once fully ready
     if not args.no_open:
         def _open():
-            time.sleep(1.2)
+            start_t = time.time()
             url = f"http://{args.host}:{args.port}"
+
+            # 1. Wait for server socket bind (up to 4.0s)
+            while time.time() - start_t < 4.0:
+                try:
+                    with socket.create_connection((args.host, args.port), timeout=0.2):
+                        break
+                except (OSError, ConnectionRefusedError):
+                    time.sleep(0.1)
+
+            # 2. Wait for neural perception model loader & initial frame readiness (up to 5.0s max fallback)
+            while time.time() - start_t < 5.0:
+                models_ready = getattr(getattr(controller, "perception", None), "is_loaded", True)
+                frame_ready = len(getattr(controller, "latest_rgb", b"")) > 1024
+                if models_ready and frame_ready:
+                    break
+                time.sleep(0.1)
+
             try:
                 webbrowser.open(url)
             except Exception:
