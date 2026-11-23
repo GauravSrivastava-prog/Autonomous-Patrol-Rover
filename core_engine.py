@@ -779,6 +779,72 @@ class RobotController:
         sx, sy = self._cam_to_screen(x_cam, y_cam, z_cam)
         return sx, sy, z_cam
 
+    def _clip_polygon_near_plane(self, poly_cam: List[Tuple[float, float, float]],
+                                 z_near: float = 0.08) -> Optional[List[Tuple[float, float, float]]]:
+        if not poly_cam:
+            return None
+        out_pts: List[Tuple[float, float, float]] = []
+        n = len(poly_cam)
+        for i in range(n):
+            curr = poly_cam[i]
+            prev = poly_cam[(i - 1 + n) % n]
+            curr_in = curr[2] >= z_near
+            prev_in = prev[2] >= z_near
+
+            if curr_in:
+                if not prev_in:
+                    dz = curr[2] - prev[2]
+                    if abs(dz) > 1e-9:
+                        t = (z_near - prev[2]) / dz
+                        ix = prev[0] + t * (curr[0] - prev[0])
+                        iy = prev[1] + t * (curr[1] - prev[1])
+                        out_pts.append((ix, iy, z_near))
+                out_pts.append(curr)
+            elif prev_in:
+                dz = curr[2] - prev[2]
+                if abs(dz) > 1e-9:
+                    t = (z_near - prev[2]) / dz
+                    ix = prev[0] + t * (curr[0] - prev[0])
+                    iy = prev[1] + t * (curr[1] - prev[1])
+                    out_pts.append((ix, iy, z_near))
+
+        if len(out_pts) < 3:
+            return None
+        return out_pts
+
+    def _project_polygon(self, world_pts: List[Tuple[float, float, float]],
+                         cam_x: float, cam_y: float, cam_z: float,
+                         cam_yaw: float, pitch: float,
+                         z_near: float = 0.08) -> Optional[np.ndarray]:
+        cam_pts = [self._to_cam(px, py, pz, cam_x, cam_y, cam_z, cam_yaw, pitch) for px, py, pz in world_pts]
+        clipped = self._clip_polygon_near_plane(cam_pts, z_near=z_near)
+        if clipped is None:
+            return None
+        screen_pts = [self._cam_to_screen(x, y, z) for x, y, z in clipped]
+        return np.array(screen_pts, dtype=np.int32)
+
+    def _clip_segment_near_plane(self, p1_cam: Tuple[float, float, float],
+                                 p2_cam: Tuple[float, float, float],
+                                 z_near: float = 0.08) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        x1, y1, z1 = p1_cam
+        x2, y2, z2 = p2_cam
+        in1 = z1 >= z_near
+        in2 = z2 >= z_near
+        if not in1 and not in2:
+            return None
+        if in1 and in2:
+            return self._cam_to_screen(x1, y1, z1), self._cam_to_screen(x2, y2, z2)
+        dz = z2 - z1
+        if abs(dz) < 1e-9:
+            return None
+        t = (z_near - z1) / dz
+        ix = x1 + t * (x2 - x1)
+        iy = y1 + t * (y2 - y1)
+        if in1 and not in2:
+            return self._cam_to_screen(x1, y1, z1), self._cam_to_screen(ix, iy, z_near)
+        else:
+            return self._cam_to_screen(ix, iy, z_near), self._cam_to_screen(x2, y2, z2)
+
     # ── 1280x720 HD GTA Chase Graphics Engine (Solid Room & Military Rover) ──
     def _render_frames(self):
         with self.state.lock:
@@ -794,34 +860,66 @@ class RobotController:
         # Canvas setup: Solid indoor laboratory ceiling / upper wall fill (zero black void)
         frame = np.full((CAMERA_H, CAMERA_W, 3), (180, 185, 192), dtype=np.uint8)
 
-        # ── Step 1: Camera Rig Tuning (The True GTA Feel) ──
+        c_bound = 1.85  # Strict interior bounding box (0.15m safety margin inside 2.0m walls)
+
+        # ── Step 1: Camera Rig Tuning & Spring-Arm Containment ──
         if view_mode == "TPP":
-            # True GTA 3rd-Person Chase: floats 1.4m behind and 0.75m above with -20° downward pitch
-            d_behind = 1.40
-            cam_x = rx - d_behind * math.cos(ryaw)
-            cam_y = ry - d_behind * math.sin(ryaw)
-            cam_z = 0.75
+            # True GTA 3rd-Person Chase with Ray-AABB Spring-Arm Clamping
+            d_behind_max = 1.40
+            min_arm = 0.35
+
+            # Direction vector from rover to camera
+            vx = -math.cos(ryaw)
+            vy = -math.sin(ryaw)
+
+            test_rx = max(-c_bound + 0.01, min(c_bound - 0.01, rx))
+            test_ry = max(-c_bound + 0.01, min(c_bound - 0.01, ry))
+
+            t_hit = 1.0
+            if vx > 1e-6:
+                t_x = (c_bound - test_rx) / (vx * d_behind_max)
+                t_hit = min(t_hit, max(0.0, t_x))
+            elif vx < -1e-6:
+                t_x = (-c_bound - test_rx) / (vx * d_behind_max)
+                t_hit = min(t_hit, max(0.0, t_x))
+
+            if vy > 1e-6:
+                t_y = (c_bound - test_ry) / (vy * d_behind_max)
+                t_hit = min(t_hit, max(0.0, t_y))
+            elif vy < -1e-6:
+                t_y = (-c_bound - test_ry) / (vy * d_behind_max)
+                t_hit = min(t_hit, max(0.0, t_y))
+
+            clamped_dist = max(min_arm, d_behind_max * t_hit)
+            cam_x = test_rx + clamped_dist * vx
+            cam_y = test_ry + clamped_dist * vy
+            cam_x = max(-c_bound, min(c_bound, cam_x))
+            cam_y = max(-c_bound, min(c_bound, cam_y))
+
+            pull_fraction = max(0.0, min(1.0, 1.0 - (clamped_dist - min_arm) / max(0.01, (d_behind_max - min_arm))))
+            cam_z = 0.75 + 0.30 * pull_fraction  # elevates from 0.75m up to 1.05m
             cam_yaw = ryaw
-            cam_pitch = math.radians(-20.0)  # -0.349 rad downward tilt
+            cam_pitch = math.radians(-20.0 - 8.0 * pull_fraction)  # tilts down to -28.0°
             horizon_y = int(CAMERA_H / 2.0 + math.tan(cam_pitch) * FOCAL_LENGTH * 0.40)
         elif view_mode in ("TOP", "TOPDOWN"):
             # High-angle tactical overhead surveillance view
-            cam_x = rx - 0.40 * math.cos(ryaw)
-            cam_y = ry - 0.40 * math.sin(ryaw)
+            cam_x = max(-c_bound, min(c_bound, rx - 0.40 * math.cos(ryaw)))
+            cam_y = max(-c_bound, min(c_bound, ry - 0.40 * math.sin(ryaw)))
             cam_z = 2.40
             cam_yaw = ryaw
             cam_pitch = math.radians(-62.0)
             horizon_y = -40
         else:
             # 1st-Person Bumper View ("FPP")
-            cam_x = rx + 0.16 * math.cos(ryaw)
-            cam_y = ry + 0.16 * math.sin(ryaw)
+            cam_x = max(-c_bound, min(c_bound, rx + 0.16 * math.cos(ryaw)))
+            cam_y = max(-c_bound, min(c_bound, ry + 0.16 * math.sin(ryaw)))
             cam_z = 0.16
             cam_yaw = ryaw
             cam_pitch = 0.02
             horizon_y = int(CAMERA_H / 2.0)
 
-        # Draw Visible Overhead LED Light Troffers on Ceiling
+        # ── Pass 1: Ceiling & Reflective Dark Polished Concrete Floor ──
+        # Visible Overhead LED Light Troffers on Ceiling
         if horizon_y > 40:
             cv2.rectangle(frame, (int(CAMERA_W * 0.22), 20), (int(CAMERA_W * 0.42), 55), (255, 255, 250), -1)
             cv2.rectangle(frame, (int(CAMERA_W * 0.22), 20), (int(CAMERA_W * 0.42), 55), (140, 145, 150), 2)
@@ -832,103 +930,167 @@ class RobotController:
         if 0 <= horizon_y < CAMERA_H:
             cv2.rectangle(frame, (0, horizon_y), (CAMERA_W, CAMERA_H), (45, 45, 48), -1)
 
-        # ── Step 2: High-Contrast Perspective Floor Grid & Markings ──
+        # 3D floor quad clipped against camera near-plane
+        floor_world = [
+            (-ARENA_BOUND, -ARENA_BOUND, 0.0),
+            (ARENA_BOUND, -ARENA_BOUND, 0.0),
+            (ARENA_BOUND, ARENA_BOUND, 0.0),
+            (-ARENA_BOUND, ARENA_BOUND, 0.0),
+        ]
+        floor_poly = self._project_polygon(floor_world, cam_x, cam_y, cam_z, cam_yaw, cam_pitch, z_near=0.08)
+        if floor_poly is not None:
+            cv2.fillPoly(frame, [floor_poly], (45, 45, 48))
+
+        # High-Contrast Perspective Floor Grid & Markings (Clipped to Near-Plane)
         grid_step = 0.40
         num_grid = int(ARENA_BOUND / grid_step)
         for i in range(-num_grid, num_grid + 1):
             gx = i * grid_step
-            p1 = self._project_point(gx, -ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            p2 = self._project_point(gx, ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            if p1 and p2:
+            p1_cam = self._to_cam(gx, -ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            p2_cam = self._to_cam(gx, ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            seg = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=0.08)
+            if seg:
                 color = (65, 68, 74) if i != 0 else (90, 95, 105)
                 thickness = 2 if i == 0 else 1
-                cv2.line(frame, (p1[0], p1[1]), (p2[0], p2[1]), color, thickness)
+                cv2.line(frame, seg[0], seg[1], color, thickness)
 
         for j in range(-num_grid, num_grid + 1):
             gy = j * grid_step
-            p1 = self._project_point(-ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            p2 = self._project_point(ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            if p1 and p2:
+            p1_cam = self._to_cam(-ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            p2_cam = self._to_cam(ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            seg = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=0.08)
+            if seg:
                 color = (65, 68, 74) if j != 0 else (90, 95, 105)
                 thickness = 2 if j == 0 else 1
-                cv2.line(frame, (p1[0], p1[1]), (p2[0], p2[1]), color, thickness)
+                cv2.line(frame, seg[0], seg[1], color, thickness)
 
-        # Center Floor Ring & Amber Boundary Line
+        # Center Floor Ring
         c_proj = self._project_point(0, 0, 0.001, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
         if c_proj:
             scale_c = FOCAL_LENGTH / max(0.1, c_proj[2])
             cv2.circle(frame, (c_proj[0], c_proj[1]), max(8, int(0.45 * scale_c)), (85, 90, 100), 2)
 
-        # ── Step 3: Solid Enclosing Facility Walls (2.4m High, Clipped to Near-Plane) ──
-        wall_pts = [
-            (-ARENA_BOUND, -ARENA_BOUND),
-            (ARENA_BOUND, -ARENA_BOUND),
-            (ARENA_BOUND, ARENA_BOUND),
-            (-ARENA_BOUND, ARENA_BOUND),
-        ]
+        # ── Pass 2: Ground Contact Shadows (Drawn Directly on Floor Before Walls) ──
+        for obj in ARENA_OBJECTS.values():
+            b_proj = self._project_point(obj.x, obj.y, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            if b_proj:
+                bx, by, bz = b_proj
+                scale = FOCAL_LENGTH / max(0.1, bz)
+                r_px = max(6, int(obj.radius * scale))
+                shadow_overlay = frame.copy()
+                cv2.ellipse(shadow_overlay, (bx, by), (r_px + 8, max(4, int(r_px * 0.45))),
+                            0, 0, 360, (0, 0, 0), -1)
+                cv2.addWeighted(shadow_overlay, 0.48, frame, 0.52, 0, frame)
+
+        if view_mode in ("TPP", "TOP", "TOPDOWN"):
+            r_proj = self._project_point(rx, ry, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            if r_proj:
+                rcx, rcy, rz = r_proj
+                scale = FOCAL_LENGTH / max(0.1, rz)
+                sw_w = max(18, int(0.36 * scale))
+                sw_h = max(8, int(0.22 * scale))
+                shadow_overlay = frame.copy()
+                cv2.ellipse(shadow_overlay, (rcx, rcy), (sw_w, sw_h),
+                            int(-math.degrees(ryaw)), 0, 360, (0, 0, 0), -1)
+                cv2.addWeighted(shadow_overlay, 0.45, frame, 0.55, 0, frame)
+
+                # Forward Headlight Ground Illumination Beam (Crisp Pure White)
+                beam_len = 0.95
+                beam_spread = 0.35
+                b_left = self._project_point(rx + beam_len * math.cos(ryaw) - beam_spread * math.sin(ryaw),
+                                             ry + beam_len * math.sin(ryaw) + beam_spread * math.cos(ryaw),
+                                             0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                b_right = self._project_point(rx + beam_len * math.cos(ryaw) + beam_spread * math.sin(ryaw),
+                                              ry + beam_len * math.sin(ryaw) - beam_spread * math.cos(ryaw),
+                                              0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                if b_left and b_right:
+                    beam_poly = np.array([[rcx, rcy], [b_left[0], b_left[1]], [b_right[0], b_right[1]]], dtype=np.int32)
+                    beam_layer = frame.copy()
+                    cv2.fillPoly(beam_layer, [beam_poly], (245, 248, 255))
+                    cv2.addWeighted(beam_layer, 0.14, frame, 0.86, 0, frame)
+
+        # ── Pass 3: Solid Enclosing Facility Walls (Near-Plane Clipped, Culled & Depth Sorted) ──
         wall_h = 2.40
         baseboard_h = 0.14
-        near_z = 0.12
+        near_z = 0.08
+        B = ARENA_BOUND
 
-        for idx in range(4):
-            x1, y1 = wall_pts[idx]
-            x2, y2 = wall_pts[(idx + 1) % 4]
+        wall_specs = [
+            # South wall (y = -B, facing +Y into room)
+            {
+                "center": (0.0, -B), "inward": (0.0, 1.0),
+                "quad": [(-B, -B, 0.0), (B, -B, 0.0), (B, -B, wall_h), (-B, -B, wall_h)],
+                "bb_quad": [(-B, -B, 0.0), (B, -B, 0.0), (B, -B, baseboard_h), (-B, -B, baseboard_h)],
+                "bb_line": [(-B, -B, baseboard_h), (B, -B, baseboard_h)],
+                "top_line": [(-B, -B, wall_h), (B, -B, wall_h)],
+            },
+            # East wall (x = +B, facing -X into room)
+            {
+                "center": (B, 0.0), "inward": (-1.0, 0.0),
+                "quad": [(B, -B, 0.0), (B, B, 0.0), (B, B, wall_h), (B, -B, wall_h)],
+                "bb_quad": [(B, -B, 0.0), (B, B, 0.0), (B, B, baseboard_h), (B, -B, baseboard_h)],
+                "bb_line": [(B, -B, baseboard_h), (B, B, baseboard_h)],
+                "top_line": [(B, -B, wall_h), (B, B, wall_h)],
+            },
+            # North wall (y = +B, facing -Y into room)
+            {
+                "center": (0.0, B), "inward": (0.0, -1.0),
+                "quad": [(B, B, 0.0), (-B, B, 0.0), (-B, B, wall_h), (B, B, wall_h)],
+                "bb_quad": [(B, B, 0.0), (-B, B, 0.0), (-B, B, baseboard_h), (B, B, baseboard_h)],
+                "bb_line": [(B, B, baseboard_h), (-B, B, baseboard_h)],
+                "top_line": [(B, B, wall_h), (-B, B, wall_h)],
+            },
+            # West wall (x = -B, facing +X into room)
+            {
+                "center": (-B, 0.0), "inward": (1.0, 0.0),
+                "quad": [(-B, B, 0.0), (-B, -B, 0.0), (-B, -B, wall_h), (-B, B, wall_h)],
+                "bb_quad": [(-B, B, 0.0), (-B, -B, 0.0), (-B, -B, baseboard_h), (-B, B, baseboard_h)],
+                "bb_line": [(-B, B, baseboard_h), (-B, -B, baseboard_h)],
+                "top_line": [(-B, B, wall_h), (-B, -B, wall_h)],
+            },
+        ]
 
-            # Bottom corners in camera space
-            xc1, yc1, zc1 = self._to_cam(x1, y1, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            xc2, yc2, zc2 = self._to_cam(x2, y2, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            # Top corners in camera space
-            xt1, yt1, zt1 = self._to_cam(x1, y1, wall_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            xt2, yt2, zt2 = self._to_cam(x2, y2, wall_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            # Baseboard top corners
-            xbb1, ybb1, zbb1 = self._to_cam(x1, y1, baseboard_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            xbb2, ybb2, zbb2 = self._to_cam(x2, y2, baseboard_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+        # Depth-sort walls from furthest to closest to camera
+        for w in wall_specs:
+            w["dist"] = math.hypot(cam_x - w["center"][0], cam_y - w["center"][1])
+        wall_specs.sort(key=lambda w: w["dist"], reverse=True)
 
-            if zc1 < near_z and zc2 < near_z:
-                continue  # Wall is entirely behind camera
+        for w in wall_specs:
+            # Backface culling: verify camera is on interior side of the wall
+            vx = cam_x - w["center"][0]
+            vy = cam_y - w["center"][1]
+            dot = vx * w["inward"][0] + vy * w["inward"][1]
+            if dot <= 0.01:
+                continue
 
-            # Near-plane clipping for continuous solid walls
-            if zc1 < near_z:
-                t = (near_z - zc1) / (zc2 - zc1)
-                xc1 = xc1 + t * (xc2 - xc1)
-                yc1 = yc1 + t * (yc2 - yc1)
-                zc1 = near_z
-                xt1 = xt1 + t * (xt2 - xt1)
-                yt1 = yt1 + t * (yt2 - yt1)
-                zt1 = near_z
-                xbb1 = xbb1 + t * (xbb2 - xbb1)
-                ybb1 = ybb1 + t * (ybb2 - ybb1)
-                zbb1 = near_z
-            elif zc2 < near_z:
-                t = (near_z - zc2) / (zc1 - zc2)
-                xc2 = xc2 + t * (xc1 - xc2)
-                yc2 = yc2 + t * (yc1 - yc2)
-                zc2 = near_z
-                xt2 = xt2 + t * (xt1 - xt2)
-                yt2 = yt2 + t * (yt1 - yt2)
-                zt2 = near_z
-                xbb2 = xbb2 + t * (xbb1 - xbb2)
-                ybb2 = ybb2 + t * (ybb1 - ybb2)
-                zbb2 = near_z
+            # Render drywall quad
+            wall_poly = self._project_polygon(w["quad"], cam_x, cam_y, cam_z, cam_yaw, cam_pitch, z_near=near_z)
+            if wall_poly is not None:
+                cv2.fillPoly(frame, [wall_poly], (235, 238, 240))
+                cv2.polylines(frame, [wall_poly], True, (190, 195, 200), 1)
 
-            p_b1 = self._cam_to_screen(xc1, yc1, zc1)
-            p_b2 = self._cam_to_screen(xc2, yc2, zc2)
-            p_t1 = self._cam_to_screen(xt1, yt1, zt1)
-            p_t2 = self._cam_to_screen(xt2, yt2, zt2)
-            p_bb1 = self._cam_to_screen(xbb1, ybb1, zbb1)
-            p_bb2 = self._cam_to_screen(xbb2, ybb2, zbb2)
+            # Render dark graphite baseboard quad
+            bb_poly = self._project_polygon(w["bb_quad"], cam_x, cam_y, cam_z, cam_yaw, cam_pitch, z_near=near_z)
+            if bb_poly is not None:
+                cv2.fillPoly(frame, [bb_poly], (30, 32, 35))
 
-            # Solid architectural facility wall (clean matte off-white drywall)
-            wall_poly = np.array([p_b1, p_b2, p_t2, p_t1], dtype=np.int32)
-            cv2.fillPoly(frame, [wall_poly], (235, 238, 240))
-            # Dark graphite baseboard
-            bb_poly = np.array([p_b1, p_b2, p_bb2, p_bb1], dtype=np.int32)
-            cv2.fillPoly(frame, [bb_poly], (30, 32, 35))
-            cv2.line(frame, p_bb1, p_bb2, (50, 52, 56), 1)
+            # Baseboard top trim line
+            p1_cam = self._to_cam(w["bb_line"][0][0], w["bb_line"][0][1], w["bb_line"][0][2],
+                                  cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            p2_cam = self._to_cam(w["bb_line"][1][0], w["bb_line"][1][1], w["bb_line"][1][2],
+                                  cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            seg_bb = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=near_z)
+            if seg_bb is not None:
+                cv2.line(frame, seg_bb[0], seg_bb[1], (50, 52, 56), 1)
+
             # High-vis yellow/amber hazard safety coping
-            cv2.line(frame, p_t1, p_t2, (25, 195, 245), 3)
-            # Wall perimeter edge seam
-            cv2.polylines(frame, [wall_poly], True, (190, 195, 200), 1)
+            p1_cam = self._to_cam(w["top_line"][0][0], w["top_line"][0][1], w["top_line"][0][2],
+                                  cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            p2_cam = self._to_cam(w["top_line"][1][0], w["top_line"][1][1], w["top_line"][1][2],
+                                  cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            seg_top = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=near_z)
+            if seg_top is not None:
+                cv2.line(frame, seg_top[0], seg_top[1], (25, 195, 245), 3)
 
         # ── Step 4: Depth-Sorted Rendering of 3D Objects & Rover (Painter's Algorithm) ──
         render_queue = []
@@ -961,10 +1123,10 @@ class RobotController:
         for item in render_queue:
             if item["type"] == "object":
                 self._render_3d_object(frame, item["obj"], item["key"], target_key,
-                                       cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                                       cam_x, cam_y, cam_z, cam_yaw, cam_pitch, render_shadow=False)
             elif item["type"] == "rover":
                 self._render_3d_rover(frame, rx, ry, ryaw, vl, vr, wheel_l, wheel_r,
-                                      cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                                      cam_x, cam_y, cam_z, cam_yaw, cam_pitch, render_shadow=False)
 
         # Store clean un-annotated frame for perception worker & depth map
         with self.state.lock:
@@ -1025,7 +1187,7 @@ class RobotController:
 
     # ── Realistic 3D Asset Rendering Engine (Traffic Cone, Potted Plant, Chair, Crates, Hazard Box) ──
     def _render_3d_object(self, frame, obj: ArenaObject, key: str, target_key: str,
-                          cam_x, cam_y, cam_z, cam_yaw, cam_pitch):
+                          cam_x, cam_y, cam_z, cam_yaw, cam_pitch, render_shadow: bool = True):
         b_proj = self._project_point(obj.x, obj.y, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
         t_proj = self._project_point(obj.x, obj.y, obj.height, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
         if not b_proj or not t_proj:
@@ -1038,10 +1200,11 @@ class RobotController:
         r_px = max(6, int(obj.radius * scale))
 
         # 1. Soft Realistic Ground Contact Shadow
-        shadow_overlay = frame.copy()
-        cv2.ellipse(shadow_overlay, (bx, by), (r_px + 8, max(4, int(r_px * 0.45))),
-                    0, 0, 360, (0, 0, 0), -1)
-        cv2.addWeighted(shadow_overlay, 0.48, frame, 0.52, 0, frame)
+        if render_shadow:
+            shadow_overlay = frame.copy()
+            cv2.ellipse(shadow_overlay, (bx, by), (r_px + 8, max(4, int(r_px * 0.45))),
+                        0, 0, 360, (0, 0, 0), -1)
+            cv2.addWeighted(shadow_overlay, 0.48, frame, 0.52, 0, frame)
 
         # 2. Asset-Specific High-Fidelity 3D Geometry
         if key == "RED":
@@ -1278,7 +1441,7 @@ class RobotController:
 
     # ── 3D Rover Model Rendering (Military Prototype: Matte Gunmetal & Subtle White LEDs) ──
     def _render_3d_rover(self, frame, rx, ry, ryaw, vl, vr, wheel_l, wheel_r,
-                         cam_x, cam_y, cam_z, cam_yaw, cam_pitch):
+                         cam_x, cam_y, cam_z, cam_yaw, cam_pitch, render_shadow: bool = True):
         r_proj = self._project_point(rx, ry, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
         if not r_proj:
             return
@@ -1287,27 +1450,28 @@ class RobotController:
         scale = FOCAL_LENGTH / max(0.1, rz)
 
         # 1. Realistic Ambient Occlusion Ground Contact Shadow
-        sw_w = max(18, int(0.36 * scale))
-        sw_h = max(8, int(0.22 * scale))
-        shadow_overlay = frame.copy()
-        cv2.ellipse(shadow_overlay, (rcx, rcy), (sw_w, sw_h),
-                    int(-math.degrees(ryaw)), 0, 360, (0, 0, 0), -1)
-        cv2.addWeighted(shadow_overlay, 0.45, frame, 0.55, 0, frame)
+        if render_shadow:
+            sw_w = max(18, int(0.36 * scale))
+            sw_h = max(8, int(0.22 * scale))
+            shadow_overlay = frame.copy()
+            cv2.ellipse(shadow_overlay, (rcx, rcy), (sw_w, sw_h),
+                        int(-math.degrees(ryaw)), 0, 360, (0, 0, 0), -1)
+            cv2.addWeighted(shadow_overlay, 0.45, frame, 0.55, 0, frame)
 
-        # 2. Subtle Forward Headlight Ground Illumination Beam (Crisp Pure White)
-        beam_len = 0.95
-        beam_spread = 0.35
-        b_left = self._project_point(rx + beam_len * math.cos(ryaw) - beam_spread * math.sin(ryaw),
-                                     ry + beam_len * math.sin(ryaw) + beam_spread * math.cos(ryaw),
-                                     0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-        b_right = self._project_point(rx + beam_len * math.cos(ryaw) + beam_spread * math.sin(ryaw),
-                                      ry + beam_len * math.sin(ryaw) - beam_spread * math.cos(ryaw),
-                                      0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-        if b_left and b_right:
-            beam_poly = np.array([[rcx, rcy], [b_left[0], b_left[1]], [b_right[0], b_right[1]]], dtype=np.int32)
-            beam_layer = frame.copy()
-            cv2.fillPoly(beam_layer, [beam_poly], (245, 248, 255))  # Crisp white headlight beam
-            cv2.addWeighted(beam_layer, 0.14, frame, 0.86, 0, frame)
+            # Subtle Forward Headlight Ground Illumination Beam (Crisp Pure White)
+            beam_len = 0.95
+            beam_spread = 0.35
+            b_left = self._project_point(rx + beam_len * math.cos(ryaw) - beam_spread * math.sin(ryaw),
+                                         ry + beam_len * math.sin(ryaw) + beam_spread * math.cos(ryaw),
+                                         0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            b_right = self._project_point(rx + beam_len * math.cos(ryaw) + beam_spread * math.sin(ryaw),
+                                          ry + beam_len * math.sin(ryaw) - beam_spread * math.cos(ryaw),
+                                          0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            if b_left and b_right:
+                beam_poly = np.array([[rcx, rcy], [b_left[0], b_left[1]], [b_right[0], b_right[1]]], dtype=np.int32)
+                beam_layer = frame.copy()
+                cv2.fillPoly(beam_layer, [beam_poly], (245, 248, 255))  # Crisp white headlight beam
+                cv2.addWeighted(beam_layer, 0.14, frame, 0.86, 0, frame)
 
         # 3. Sleek Elongated Matte Gunmetal AGV Chassis Hull
         bw_2 = 0.18  # elongated length
