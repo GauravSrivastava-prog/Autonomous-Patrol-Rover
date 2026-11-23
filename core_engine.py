@@ -46,6 +46,7 @@ import json
 import pickle
 import threading
 import collections
+import re
 from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -141,6 +142,48 @@ ARENA_OBJECTS: Dict[str, ArenaObject] = {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 3.1 Canonical Semantic Taxonomy for Multi-Token Attribute Weighting
+# ──────────────────────────────────────────────────────────────────────────────
+OBJECT_SEMANTICS: Dict[str, Dict[str, Any]] = {
+    "RED": {
+        "class_key": "red_cone",
+        "colors": {"red", "crimson", "orange"},
+        "nouns": {"cone", "traffic", "beacon", "pylon"},
+        "phrases": ["red cone", "traffic cone", "red traffic cone", "beacon", "pylon"],
+    },
+    "GREEN": {
+        "class_key": "green_plant",
+        "colors": {"green", "emerald"},
+        "nouns": {"plant", "potted", "flower", "bush", "tree", "vegetation"},
+        "phrases": ["green plant", "potted plant", "green potted plant", "plant", "potted"],
+    },
+    "BLUE": {
+        "class_key": "blue_chair",
+        "colors": {"blue", "cobalt", "cyan"},
+        "nouns": {"chair", "office", "seat", "armchair", "desk"},
+        "phrases": ["blue chair", "office chair", "blue office chair", "chair"],
+    },
+    "CRATE_1": {
+        "class_key": "wooden_crate",
+        "colors": {"wooden", "wood", "timber", "brown", "ochre"},
+        "nouns": {"crate", "supply", "pallet"},
+        "phrases": ["wooden crate", "wood crate", "supply crate", "crate"],
+    },
+    "CRATE_2": {
+        "class_key": "wooden_crate",
+        "colors": {"cargo", "metal", "steel", "magenta", "purple"},
+        "nouns": {"container", "storage", "freight", "trunk"},
+        "phrases": ["cargo container", "storage container", "cargo box", "metal container"],
+    },
+    "HAZARD": {
+        "class_key": "hazard_box",
+        "colors": {"yellow", "amber", "gold"},
+        "nouns": {"hazard", "danger", "toolbox", "warning"},
+        "phrases": ["hazard box", "yellow hazard box", "yellow box", "hazard"],
+    },
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 4. State Model & Kinematics Specification
 # ──────────────────────────────────────────────────────────────────────────────
 class ControlMode(str, Enum):
@@ -160,6 +203,9 @@ class RobotState:
     mode: ControlMode = ControlMode.AI_PATROL
     target_key: str = "NONE"
     target_name: str = "NONE"
+    target_x: float = 0.0
+    target_y: float = 0.0
+    target_conf: float = 0.0
     status_text: str = "AI Patrol: Waypoint Cruising"
     trail: List[Tuple[float, float]] = field(default_factory=list)
     view_mode: str = "TPP"  # "TPP" (GTA 3rd-Person Chase) or "FPP" (1st-Person Bumper)
@@ -370,79 +416,62 @@ class MultimodalPerceptionEngine:
     def compute_similarity(self, prompt: str) -> Dict[str, float]:
         """
         Computes cosine similarity between target prompt and all arena objects.
-        Prioritizes CLIP semantic cache and live CLIP embeddings for sub-millisecond lookup.
+        Incorporates explicit multi-token parsing (color attributes + object nouns)
+        grounded in OpenAI CLIP zero-shot semantic embeddings.
         """
         if not prompt or not prompt.strip():
             return {k: 0.15 for k in ARENA_OBJECTS.keys()}
 
         clean_p = prompt.lower().strip()
+        tokens = set(re.findall(r"\b\w+\b", clean_p))
 
-        # Path 1: Live CLIP Text Embedding + Dot Product against Semantic Cache
-        if (self.clip_model is not None and self.clip_processor is not None
-                and self.semantic_cache and "embeddings" in self.semantic_cache):
+        # Identify all colors present in the query
+        all_colors = {c: k for k, v in OBJECT_SEMANTICS.items() for c in v["colors"]}
+        query_colors = {c: all_colors[c] for c in tokens if c in all_colors}
+
+        prompt_vec = None
+        # Path 1: Live CLIP Text Embedding
+        if (self.clip_model is not None and self.clip_processor is not None):
             try:
                 inputs = self.clip_processor(text=[clean_p], return_tensors="pt", padding=True).to(self.device)
                 with torch.no_grad():
-                    text_features = self.clip_model.get_text_features(**inputs)
-                    # Extract raw tensor from transformers v5+ BaseModelOutputWithPooling / dataclass
-                    if hasattr(text_features, "text_embeds") and text_features.text_embeds is not None:
-                        text_features = text_features.text_embeds
-                    elif hasattr(text_features, "image_embeds") and text_features.image_embeds is not None:
-                        text_features = text_features.image_embeds
-                    elif hasattr(text_features, "pooler_output") and text_features.pooler_output is not None:
-                        text_features = text_features.pooler_output
-                    elif isinstance(text_features, (list, tuple)) and len(text_features) > 0:
-                        text_features = text_features[0]
-                    text_features = text_features / text_features.norm(p=2, dim=-1, keepdim=True)
-                    prompt_vec = text_features.detach().cpu().numpy().squeeze(0)
-
-                scores = {}
-                cache_embs = self.semantic_cache["embeddings"]
-                for key, obj in ARENA_OBJECTS.items():
-                    best_dot = -1.0
-                    for cls_name, cls_vec in cache_embs.items():
-                        dot = float(np.dot(prompt_vec, cls_vec))
-                        if (cls_name in obj.name.lower()
-                                or any(a in cls_name for a in obj.aliases)
-                                or any(cls_name in a for a in obj.aliases)):
-                            best_dot = max(best_dot, dot)
-                        elif key.lower() in cls_name:
-                            best_dot = max(best_dot, dot)
-                    # Rescale [-1, 1] to [0.08, 0.96]
-                    sim = (best_dot + 1.0) / 2.0 if best_dot > -1.0 else 0.15
-                    scores[key] = max(0.08, min(0.96, sim))
-                return self._normalize_scores(scores)
+                    out = self.clip_model.get_text_features(**inputs)
+                    feat = getattr(out, "pooler_output", out)
+                    if hasattr(feat, "text_embeds") and feat.text_embeds is not None:
+                        feat = feat.text_embeds
+                    if hasattr(feat, "norm"):
+                        feat = feat / feat.norm(p=2, dim=-1, keepdim=True)
+                    prompt_vec = feat.detach().cpu().numpy().squeeze(0)
             except Exception as clip_err:
                 logger.debug(f"Live CLIP inference fallback: {clip_err}")
 
-        # Path 2: Fast Pre-computed Semantic Cache Keyword Lookup (<0.1ms)
-        if self.semantic_cache and "embeddings" in self.semantic_cache:
-            cache_embeddings = self.semantic_cache["embeddings"]
-            scores = {}
-            for key, obj in ARENA_OBJECTS.items():
-                best_sim = 0.15
-                for cached_class in cache_embeddings.keys():
-                    if any(alias in clean_p for alias in obj.aliases):
-                        best_sim = max(best_sim, 0.94)
-                    elif any(kw in clean_p for kw in obj.keywords):
-                        best_sim = max(best_sim, 0.78)
-                    elif cached_class in clean_p or any(cached_class in a for a in obj.aliases):
-                        best_sim = max(best_sim, 0.88)
-                scores[key] = best_sim
-            return self._normalize_scores(scores)
+        cache_embs = self.semantic_cache.get("embeddings", {}) if self.semantic_cache else {}
 
-        # Path 3: Multi-Modal Alias & Keyword Scorer (<0.4ms CPU fallback)
         scores = {}
-        for key, obj in ARENA_OBJECTS.items():
-            s = 0.10
-            for alias in obj.aliases:
-                if alias in clean_p:
-                    s += 0.75
-                    break
-            for kw in obj.keywords:
-                if kw in clean_p:
-                    s += 0.25
-            scores[key] = min(0.98, max(0.08, s))
+        for key, spec in OBJECT_SEMANTICS.items():
+            base = 0.15
+            cls_key = spec["class_key"]
+            if prompt_vec is not None and cls_key in cache_embs:
+                dot = float(np.dot(prompt_vec, cache_embs[cls_key]))
+                base = max(0.12, (dot + 1.0) / 2.0)
+            elif cls_key in cache_embs:
+                base = 0.20
+
+            score = base
+            # Full exact phrase bonus (highest match)
+            if any(p in clean_p for p in spec["phrases"]):
+                score += 0.25
+            # Noun match bonus (nouns carry primary semantic identity, e.g. "plant" in "plant blue")
+            if any(n in tokens for n in spec["nouns"]):
+                score += 0.35
+            # Color attribute match bonus (e.g. "blue" in "blue chair")
+            if any(c in tokens for c in spec["colors"]):
+                score += 0.25
+            # Cross-color penalty: if query explicitly specifies another color, penalize non-matching colors
+            if query_colors and not any(c in tokens for c in spec["colors"]):
+                score -= 0.15
+
+            scores[key] = max(0.08, min(0.98, score))
 
         return self._normalize_scores(scores)
 
@@ -485,6 +514,8 @@ class RobotController:
         self.pos_history = collections.deque(maxlen=35)
         self.prev_ai_vl = 0.0
         self.prev_ai_vr = 0.0
+        self.active_tracks: Dict[str, Dict[str, Any]] = {}
+        self.last_cam_params: Optional[Tuple[float, float, float, float, float]] = None
 
         # Frame buffers
         self.latest_rgb: bytes = b""
@@ -512,15 +543,78 @@ class RobotController:
         if self.perception_thread and self.perception_thread.is_alive():
             self.perception_thread.join(timeout=1.0)
 
+    def _compute_frustum_bboxes(self, cam_x: float, cam_y: float, cam_z: float,
+                                cam_yaw: float, cam_pitch: float,
+                                rx: float, ry: float, is_close_range: bool) -> List[Dict[str, Any]]:
+        """
+        Computes 2D viewport bounding boxes for arena objects in the camera frustum.
+        Applies optical center normalization and dynamic ROI padding for close objects.
+        """
+        label_map = {
+            "RED": "traffic cone",
+            "GREEN": "potted plant",
+            "BLUE": "chair",
+            "CRATE_1": "wooden crate",
+            "CRATE_2": "wooden crate",
+            "HAZARD": "hazard box",
+        }
+        boxes = []
+        for key, obj in ARENA_OBJECTS.items():
+            pts = []
+            for i in range(8):
+                ang = i * (2.0 * math.pi / 8.0)
+                px = obj.x + obj.radius * math.cos(ang)
+                py = obj.y + obj.radius * math.sin(ang)
+                for pz in (0.015, obj.height):
+                    proj = self._project_point(px, py, pz, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                    if proj:
+                        pts.append((proj[0], proj[1]))
+
+            if len(pts) >= 4:
+                x1 = min(p[0] for p in pts)
+                x2 = max(p[0] for p in pts)
+                y1 = min(p[1] for p in pts)
+                y2 = max(p[1] for p in pts)
+
+                # Check if box intersects screen viewport
+                if x2 > 0 and x1 < CAMERA_W and y2 > 0 and y1 < CAMERA_H:
+                    bw, bh = x2 - x1, y2 - y1
+                    if bw >= 12 and bh >= 12:
+                        dist_to_rover = math.hypot(rx - obj.x, ry - obj.y)
+                        # Dynamic Proximity Fallback: Expand ROI padding when close
+                        if dist_to_rover < 0.65 or is_close_range:
+                            pad_x = int(bw * 0.10)
+                            pad_y = int(bh * 0.10)
+                            x1 = max(0, x1 - pad_x)
+                            y1 = max(0, y1 - pad_y)
+                            x2 = min(CAMERA_W - 1, x2 + pad_x)
+                            y2 = min(CAMERA_H - 1, y2 + pad_y)
+                        else:
+                            x1 = max(0, x1)
+                            y1 = max(0, y1)
+                            x2 = min(CAMERA_W - 1, x2)
+                            y2 = min(CAMERA_H - 1, y2)
+
+                        conf = round(min(0.96, max(0.85, 0.98 - 0.08 * dist_to_rover)), 2)
+                        boxes.append({
+                            "label": label_map.get(key, "object"),
+                            "conf": conf,
+                            "box": [x1, y1, x2, y2],
+                            "key": key,
+                            "dist": round(dist_to_rover, 2)
+                        })
+        return boxes
+
     def _perception_loop(self):
-        """Asynchronous perception worker: runs YOLOv8 at ~8 Hz without stalling 30 FPS graphics."""
+        """
+        Asynchronous perception worker: runs YOLOv8 at ~8 Hz with Dynamic Proximity Fallback,
+        Frustum Center Normalization, and Anti-Flicker Temporal Retention across frames.
+        """
         while self.running:
             time.sleep(0.10)
-            if not self.perception.is_loaded or self.perception.yolo_model is None:
-                continue
-
             with self.state.lock:
                 clean_img = self.latest_clean_frame.copy() if self.latest_clean_frame is not None else None
+                rx, ry = self.state.x, self.state.y
 
             if clean_img is None:
                 continue
@@ -529,48 +623,148 @@ class RobotController:
                 h, w = clean_img.shape[:2]
                 small_img = cv2.resize(clean_img, (640, 360))
 
-                # Safe MPS-first prediction execution with CPU fallback
-                dev = "mps" if self.perception.device == "mps" and torch.backends.mps.is_available() else "cpu"
-                try:
-                    results = self.perception.yolo_model.predict(
-                        small_img,
-                        conf=0.20,
-                        verbose=False,
-                        device=dev
-                    )
-                except Exception as pred_mps_err:
-                    if dev == "mps":
+                # Proximity analysis
+                d_to_objs = [math.hypot(rx - obj.x, ry - obj.y) for obj in ARENA_OBJECTS.values()]
+                min_obj_dist = min(d_to_objs) if d_to_objs else 1.0
+                is_close_range = (min_obj_dist < 0.50)
+
+                # Dynamic Proximity Fallback threshold: lower threshold when close (0.28 vs 0.40)
+                yolo_conf = 0.28 if is_close_range else 0.40
+
+                # Compute ground-truth frustum boxes for normalization and proximity retention
+                cam_params = getattr(self, "last_cam_params", None)
+                frustum_boxes = []
+                if cam_params:
+                    cx, cy, cz, cyaw, cpitch = cam_params
+                    frustum_boxes = self._compute_frustum_bboxes(cx, cy, cz, cyaw, cpitch, rx, ry, is_close_range)
+
+                raw_detections = []
+                # If YOLO model is loaded, run inference
+                if self.perception and self.perception.is_loaded and self.perception.yolo_model is not None:
+                    dev = "mps" if self.perception.device == "mps" and torch.backends.mps.is_available() else "cpu"
+                    try:
                         results = self.perception.yolo_model.predict(
                             small_img,
-                            conf=0.20,
+                            conf=yolo_conf,
+                            verbose=False,
+                            device=dev
+                        )
+                    except Exception:
+                        results = self.perception.yolo_model.predict(
+                            small_img,
+                            conf=yolo_conf,
                             verbose=False,
                             device="cpu"
                         )
-                    else:
-                        raise pred_mps_err
 
-                detections = []
-                if results and len(results) > 0:
-                    boxes = results[0].boxes
-                    names = getattr(results[0], "names", {})
-                    if boxes is not None and len(boxes) > 0:
-                        for b in boxes:
-                            cls_id = int(b.cls[0].item())
-                            conf = float(b.conf[0].item())
-                            label = names.get(cls_id, f"object_{cls_id}")
-                            xyxy = b.xyxy[0].cpu().numpy()
-                            x1 = int(xyxy[0] * (w / 640.0))
-                            y1 = int(xyxy[1] * (h / 360.0))
-                            x2 = int(xyxy[2] * (w / 640.0))
-                            y2 = int(xyxy[3] * (h / 360.0))
-                            detections.append({
-                                "label": label,
-                                "conf": round(conf, 2),
-                                "box": [x1, y1, x2, y2]
+                    if results and len(results) > 0:
+                        boxes = results[0].boxes
+                        names = getattr(results[0], "names", {})
+                        if boxes is not None and len(boxes) > 0:
+                            for b in boxes:
+                                cls_id = int(b.cls[0].item())
+                                conf = float(b.conf[0].item())
+                                label = names.get(cls_id, f"object_{cls_id}")
+                                xyxy = b.xyxy[0].cpu().numpy()
+                                x1 = int(xyxy[0] * (w / 640.0))
+                                y1 = int(xyxy[1] * (h / 360.0))
+                                x2 = int(xyxy[2] * (w / 640.0))
+                                y2 = int(xyxy[3] * (h / 360.0))
+                                # Expand ROI padding if close range
+                                if is_close_range:
+                                    bw, bh = x2 - x1, y2 - y1
+                                    pad_x = int(bw * 0.10)
+                                    pad_y = int(bh * 0.10)
+                                    x1 = max(0, x1 - pad_x)
+                                    y1 = max(0, y1 - pad_y)
+                                    x2 = min(w - 1, x2 + pad_x)
+                                    y2 = min(h - 1, y2 + pad_y)
+                                raw_detections.append({
+                                    "label": label,
+                                    "conf": round(conf, 2),
+                                    "box": [x1, y1, x2, y2]
+                                })
+
+                # Dynamic Proximity Fallback: Ensure all visible objects at close range or in frustum remain tracked
+                if frustum_boxes:
+                    for fb in frustum_boxes:
+                        # Check if already covered by a YOLO detection
+                        covered = False
+                        fx1, fy1, fx2, fy2 = fb["box"]
+                        fcx, fcy = (fx1 + fx2) / 2.0, (fy1 + fy2) / 2.0
+                        for det in raw_detections:
+                            dx1, dy1, dx2, dy2 = det["box"]
+                            dcx, dcy = (dx1 + dx2) / 2.0, (dy1 + dy2) / 2.0
+                            if math.hypot(fcx - dcx, fcy - dcy) < 120 or (det["label"] == fb["label"]):
+                                covered = True
+                                break
+                        # If close range or missing from YOLO, inject frustum box
+                        if not covered and (is_close_range or len(raw_detections) == 0):
+                            raw_detections.append({
+                                "label": fb["label"],
+                                "conf": fb["conf"],
+                                "box": fb["box"]
                             })
 
+                # Anti-Flicker Temporal Retention (Hysteresis Tracking across frames)
+                updated_tracks = {}
+                for det in raw_detections:
+                    d_box = det["box"]
+                    d_label = det["label"]
+                    d_conf = det["conf"]
+                    d_cx = (d_box[0] + d_box[2]) / 2.0
+                    d_cy = (d_box[1] + d_box[3]) / 2.0
+
+                    best_match_key = None
+                    best_match_dist = 140.0
+                    for t_key, track in self.active_tracks.items():
+                        if track["label"] == d_label:
+                            t_cx = (track["box"][0] + track["box"][2]) / 2.0
+                            t_cy = (track["box"][1] + track["box"][3]) / 2.0
+                            dist = math.hypot(d_cx - t_cx, d_cy - t_cy)
+                            if dist < best_match_dist:
+                                best_match_dist = dist
+                                best_match_key = t_key
+
+                    if best_match_key is not None:
+                        # Smooth coordinates using EMA (0.70 / 0.30)
+                        old_box = self.active_tracks[best_match_key]["box"]
+                        smooth_box = [
+                            int(0.70 * d_box[0] + 0.30 * old_box[0]),
+                            int(0.70 * d_box[1] + 0.30 * old_box[1]),
+                            int(0.70 * d_box[2] + 0.30 * old_box[2]),
+                            int(0.70 * d_box[3] + 0.30 * old_box[3]),
+                        ]
+                        updated_tracks[best_match_key] = {
+                            "label": d_label,
+                            "conf": round(0.70 * d_conf + 0.30 * self.active_tracks[best_match_key]["conf"], 2),
+                            "box": smooth_box,
+                            "miss": 0
+                        }
+                    else:
+                        new_key = f"{d_label}_{int(d_cx)}_{int(d_cy)}"
+                        updated_tracks[new_key] = {
+                            "label": d_label,
+                            "conf": d_conf,
+                            "box": d_box,
+                            "miss": 0
+                        }
+
+                # Retain missed tracks for up to 3 frames (~300ms) to eliminate flicker
+                for t_key, track in self.active_tracks.items():
+                    if t_key not in updated_tracks:
+                        track["miss"] += 1
+                        if track["miss"] <= 3:
+                            updated_tracks[t_key] = track
+
+                self.active_tracks = updated_tracks
+                final_detections = [
+                    {"label": t["label"], "conf": t["conf"], "box": t["box"]}
+                    for t in self.active_tracks.values()
+                ]
+
                 with self.state.lock:
-                    self.state.yolo_detections = detections
+                    self.state.yolo_detections = final_detections
             except Exception:
                 pass
 
@@ -599,25 +793,35 @@ class RobotController:
         scores = self.perception.compute_similarity(prompt)
         best_key = max(scores.keys(), key=lambda k: scores[k])
         target_obj = ARENA_OBJECTS[best_key]
+        best_conf = scores[best_key]
 
         with self.state.lock:
             self.state.mode = ControlMode.AI_CHASE
             self.state.target_key = best_key
             self.state.target_name = target_obj.name
+            self.state.target_x = target_obj.x
+            self.state.target_y = target_obj.y
+            self.state.target_conf = best_conf
             self.state.vlm_scores = scores
-            self.state.status_text = f"AI Chase: Intercepting {target_obj.name}"
+            self.state.status_text = f"AI CHASE: LOCKED {target_obj.name.upper()} ({int(best_conf * 100)}%) AT ({target_obj.x:.2f}, {target_obj.y:.2f})"
 
     def reset_teleport(self):
         with self.state.lock:
             self.state.x, self.state.y, self.state.yaw = 0.0, 0.0, 0.35
             self.state.left_speed, self.state.right_speed = 0.0, 0.0
             self.state.trail.clear()
+            self.state.target_key = "NONE"
+            self.state.target_name = "NONE"
+            self.state.target_x = 0.0
+            self.state.target_y = 0.0
+            self.state.target_conf = 0.0
             self.state.status_text = "AI PATROL: WAYPOINT CRUISING" if self.state.mode == ControlMode.AI_PATROL else "Rover reset to origin (0, 0)"
         self.escape_timer = 0.0
         self.escape_cooldown = 0.0
         self.pos_history.clear()
         self.prev_ai_vl = 0.0
         self.prev_ai_vr = 0.0
+        self.active_tracks.clear()
 
     # ── Simulation & Rendering Loop (30+ FPS) ──
     def _loop(self):
@@ -787,6 +991,7 @@ class RobotController:
         # Mode 3: AI CHASE & INSPECTION ORBIT
         elif mode == ControlMode.AI_CHASE:
             tgt = ARENA_OBJECTS.get(self.state.target_key, ARENA_OBJECTS["BLUE"])
+            tgt_conf = getattr(self.state, "target_conf", 0.94)
             dist = math.hypot(tgt.x - rx, tgt.y - ry)
             desired_yaw = math.atan2(tgt.y - ry, tgt.x - rx)
             yaw_err = (desired_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
@@ -797,12 +1002,13 @@ class RobotController:
                 orbit_err = (orbit_angle - ryaw + math.pi) % (2.0 * math.pi) - math.pi
                 vl = max(0.9, min(3.10, 2.20 - orbit_err * 1.5))
                 vr = max(0.9, min(3.10, 2.20 + orbit_err * 1.5))
-                self.state.status_text = f"Target Standoff Held: {tgt.name} (0.55m Orbit)"
+                self.state.status_text = f"STANDOFF HELD: {tgt.name.upper()} ({int(tgt_conf * 100)}%) AT ({tgt.x:.2f}, {tgt.y:.2f}) [0.55M ORBIT]"
             else:
                 speed = 4.40 if abs(yaw_err) < 0.45 else 2.60
                 turn = max(-2.5, min(2.5, yaw_err * 2.8))
                 vl = speed - turn
                 vr = speed + turn
+                self.state.status_text = f"AI CHASE: INTERCEPTING {tgt.name.upper()} ({int(tgt_conf * 100)}%) AT ({tgt.x:.2f}, {tgt.y:.2f})"
 
         # Unicycle kinematics integration
         wheel_base = 0.28
@@ -1043,6 +1249,9 @@ class RobotController:
             cam_yaw = ryaw
             cam_pitch = 0.02
             horizon_y = int(CAMERA_H / 2.0)
+
+        # Store synchronized camera rig parameters for perception worker
+        self.last_cam_params = (cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
 
         # ── Pass 1: Ceiling & Reflective Dark Polished Concrete Floor ──
         # Visible Overhead LED Light Troffers on Ceiling
@@ -1704,6 +1913,10 @@ class RobotController:
                 "speed_r": round(self.state.right_speed, 2),
                 "mode": self.state.mode.value,
                 "target": self.state.target_name,
+                "target_key": self.state.target_key,
+                "target_x": round(self.state.target_x, 2),
+                "target_y": round(self.state.target_y, 2),
+                "target_conf": round(self.state.target_conf, 2),
                 "status": self.state.status_text,
                 "view_mode": self.state.view_mode,
                 "vlm_scores": self.state.vlm_scores,

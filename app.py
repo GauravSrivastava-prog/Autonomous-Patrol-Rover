@@ -1046,7 +1046,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         if (d.target && d.target !== 'NONE') {
           const activeLabel = document.getElementById('vlmActiveTarget');
-          if (activeLabel) activeLabel.textContent = d.target.split(' ')[0].toUpperCase();
+          const confPct = d.target_conf ? Math.round(d.target_conf * 100) : (d.vlm_scores && d.target_key && d.vlm_scores[d.target_key] ? Math.round(d.vlm_scores[d.target_key] * 100) : 94);
+          if (activeLabel) activeLabel.textContent = `${d.target.split(' ')[0].toUpperCase()} ${confPct}%`;
         }
       }
 
