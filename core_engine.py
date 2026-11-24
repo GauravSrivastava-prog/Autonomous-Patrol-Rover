@@ -80,7 +80,7 @@ FOCAL_LENGTH = int(CAMERA_W / (2.0 * math.tan(math.radians(34.0))))  # ~948 px
 
 ARENA_BOUND = 2.00        # 4m x 4m glass arena (+/- 2.0m)
 ROVER_RADIUS = 0.22       # Collision clearance envelope
-MAX_WHEEL_SPEED = 5.20    # Max rad/s for wheel kinematics
+MAX_WHEEL_SPEED = 8.00    # Max rad/s for wheel kinematics (DWA open-space cruising)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 3. 3D Arena Taxonomy & Physical Landmark Objects
@@ -492,10 +492,10 @@ class RobotController:
     - True GTA 3rd-person chase camera rig (-20° pitch, 1.4m behind, 0.75m elevation).
     """
     WAYPOINTS: List[Tuple[float, float]] = [
-        (0.00, 1.25),
-        (-1.20, 0.10),
-        (-0.45, -0.25),
-        (0.10, 0.65),
+        (0.00, 1.25),   # North open corridor (between Green and Red)
+        (-0.60, 0.10),  # West open corridor (clear of west wall and crates)
+        (-0.35, -0.35), # South open corridor (well north of Blue and east of Crate 1)
+        (0.15, 0.60),   # East open corridor (between Hazard, Red and center)
     ]
 
     def __init__(self, init_perception: bool = True):
@@ -1004,34 +1004,35 @@ class RobotController:
             elif cmd == "RIGHT":    vl, vr = 2.90, -2.90
             else:                   vl, vr = 0.00, 0.00
 
-        # Mode 2: AI PATROL (Committed escape + smoothing + reactive obstacle/wall avoidance)
+        # Mode 2: AI PATROL (Pure Pursuit Lookahead + Dynamic Window Approach DWA)
         elif mode == ControlMode.AI_PATROL:
             now = time.time()
             self.pos_history.append((now, rx, ry))
             if self.escape_cooldown > 0.0:
                 self.escape_cooldown -= dt
 
-            d_wall = ARENA_BOUND - max(abs(rx), abs(ry)) - ROVER_RADIUS
+            d_wall_x = (ARENA_BOUND - ROVER_RADIUS) - abs(rx)
+            d_wall_y = (ARENA_BOUND - ROVER_RADIUS) - abs(ry)
+            min_wall_d = min(d_wall_x, d_wall_y)
             d_obs = [
                 math.hypot(rx - obj.x, ry - obj.y) - obj.radius - ROVER_RADIUS
                 for obj in ARENA_OBJECTS.values()
             ]
             min_obs = min(d_obs)
-            min_dist = min(d_wall, min_obs)
+            min_dist = min(min_wall_d, min_obs)
 
             # Check displacement over last ~0.8s (24 ticks)
             disp = 1.0
             if len(self.pos_history) >= 24:
                 disp = math.hypot(rx - self.pos_history[0][1], ry - self.pos_history[0][2])
 
-            # Trigger committed ESCAPE if stuck or wedged in corner/narrow gap
+            # Emergency escape fallback if physically wedged against obstacle/wall
             if self.escape_timer <= 0.0 and self.escape_cooldown <= 0.0:
-                is_stuck = (len(self.pos_history) >= 24 and disp < 0.08)
-                is_corner_wedged = (d_wall < 0.40 and min_obs < 0.28)
+                is_stuck = (len(self.pos_history) >= 30 and disp < 0.05 and min_dist < 0.20)
+                is_corner_wedged = (min_wall_d < 0.18 and min_obs < 0.18)
                 if is_stuck or is_corner_wedged:
-                    self.escape_timer = 1.5  # Committed 1.5s escape maneuver
-                    self.escape_cooldown = 2.5  # Hysteresis lock: cannot re-trigger for 2.5s
-                    # Pick the open corridor waypoint or center
+                    self.escape_timer = 1.0
+                    self.escape_cooldown = 2.5
                     best_wp_idx = min(range(len(self.WAYPOINTS)), key=lambda i: math.hypot(self.WAYPOINTS[i][0] - rx, self.WAYPOINTS[i][1] - ry))
                     self.patrol_idx = best_wp_idx
                     wx, wy = self.WAYPOINTS[self.patrol_idx]
@@ -1049,90 +1050,118 @@ class RobotController:
                 diff = (escape_target_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
 
                 if abs(diff) > 0.35:
-                    # Clean pivot toward open corridor
-                    vl_raw = -MAX_WHEEL_SPEED * self.escape_turn_sign
-                    vr_raw = MAX_WHEEL_SPEED * self.escape_turn_sign
+                    vl_raw = 2.00 - 4.50 * self.escape_turn_sign
+                    vr_raw = 2.00 + 4.50 * self.escape_turn_sign
                 else:
-                    # Smooth drive forward into open space
-                    vl_raw = 5.00
-                    vr_raw = 5.00
+                    vl_raw = 5.20
+                    vr_raw = 5.20
 
-                # Early exit if rover is clear of obstacles/walls and pointing towards target
-                if min_dist > 0.45 and abs(diff) < 0.30:
+                if min_dist > 0.35 and abs(diff) < 0.25:
                     self.escape_timer = 0.0
                     self.pos_history.clear()
             else:
-                # Normal Waypoint Cruising & Obstacle Avoidance
-                wx, wy = self.WAYPOINTS[self.patrol_idx]
-                if math.hypot(wx - rx, wy - ry) < 0.45:
-                    self.patrol_idx = (self.patrol_idx + 1) % len(self.WAYPOINTS)
-                    wx, wy = self.WAYPOINTS[self.patrol_idx]
+                # ── PHASE 1: Lookahead Waypoint Tracking (L = 0.60m) ──
+                curr_wp = self.WAYPOINTS[self.patrol_idx]
+                next_wp = self.WAYPOINTS[(self.patrol_idx + 1) % len(self.WAYPOINTS)]
+                dist_to_curr = math.hypot(curr_wp[0] - rx, curr_wp[1] - ry)
 
-                desired_yaw = math.atan2(wy - ry, wx - rx)
+                # Capture circle: advance waypoint when within 0.35m
+                L_LOOKAHEAD = 0.60
+                if dist_to_curr < 0.35:
+                    self.patrol_idx = (self.patrol_idx + 1) % len(self.WAYPOINTS)
+                    curr_wp = self.WAYPOINTS[self.patrol_idx]
+                    next_wp = self.WAYPOINTS[(self.patrol_idx + 1) % len(self.WAYPOINTS)]
+                    dist_to_curr = math.hypot(curr_wp[0] - rx, curr_wp[1] - ry)
+
+                # Smoothly blend target coordinate toward next waypoint inside lookahead radius
+                if dist_to_curr < L_LOOKAHEAD:
+                    blend = max(0.0, min(1.0, 1.0 - (dist_to_curr / L_LOOKAHEAD)))
+                    tx = (1.0 - blend) * curr_wp[0] + blend * next_wp[0]
+                    ty = (1.0 - blend) * curr_wp[1] + blend * next_wp[1]
+                else:
+                    tx, ty = curr_wp[0], curr_wp[1]
+
+                # ── PHASE 2: Dynamic Window Approach (DWA) Vector Blending ──
+                # 1. Attraction Vector toward lookahead target
+                dx, dy = tx - rx, ty - ry
+                d_tgt = max(1e-4, math.hypot(dx, dy))
+                ux_att, uy_att = dx / d_tgt, dy / d_tgt
+
+                # 2. Distance-weighted exponential repulsion from obstacles
+                fx_rep, fy_rep = 0.0, 0.0
+                fwd_obs_d = float('inf')
+                for obj in ARENA_OBJECTS.values():
+                    ox, oy = rx - obj.x, ry - obj.y
+                    dist_center = math.hypot(ox, oy)
+                    clearance = dist_center - obj.radius - ROVER_RADIUS
+                    if clearance < 0.90:
+                        mag = math.exp(-max(0.0, clearance) / 0.25) * 1.50
+                        fx_rep += (ox / max(1e-4, dist_center)) * mag
+                        fy_rep += (oy / max(1e-4, dist_center)) * mag
+
+                    # Forward obstacle clearance
+                    dx_obj, dy_obj = obj.x - rx, obj.y - ry
+                    fwd_proj = dx_obj * math.cos(ryaw) + dy_obj * math.sin(ryaw)
+                    lat_proj = abs(-dx_obj * math.sin(ryaw) + dy_obj * math.cos(ryaw))
+                    if fwd_proj > 0 and lat_proj < (obj.radius + ROVER_RADIUS + 0.15):
+                        fwd_clear = fwd_proj - obj.radius - ROVER_RADIUS
+                        if fwd_clear < fwd_obs_d:
+                            fwd_obs_d = fwd_clear
+
+                # 3. Distance-weighted exponential repulsion from walls
+                if d_wall_x < 0.65:
+                    sign = -1.0 if rx > 0 else 1.0
+                    fx_rep += sign * math.exp(-max(0.0, d_wall_x) / 0.20) * 1.80
+                if d_wall_y < 0.65:
+                    sign = -1.0 if ry > 0 else 1.0
+                    fy_rep += sign * math.exp(-max(0.0, d_wall_y) / 0.20) * 1.80
+
+                # Forward wall clearance calculation
+                fwd_wall_d = float('inf')
+                cos_y, sin_y = math.cos(ryaw), math.sin(ryaw)
+                if cos_y > 1e-3:    fwd_wall_d = min(fwd_wall_d, (ARENA_BOUND - ROVER_RADIUS - rx) / cos_y)
+                elif cos_y < -1e-3:  fwd_wall_d = min(fwd_wall_d, (-ARENA_BOUND + ROVER_RADIUS - rx) / cos_y)
+                if sin_y > 1e-3:    fwd_wall_d = min(fwd_wall_d, (ARENA_BOUND - ROVER_RADIUS - ry) / sin_y)
+                elif sin_y < -1e-3:  fwd_wall_d = min(fwd_wall_d, (-ARENA_BOUND + ROVER_RADIUS - ry) / sin_y)
+
+                effective_fwd_clear = min(fwd_obs_d, fwd_wall_d, min_wall_d + 0.30)
+                clearance_total = min_dist
+
+                # 4. Blended desired heading vector
+                v_des_x = ux_att + fx_rep
+                v_des_y = uy_att + fy_rep
+                desired_yaw = math.atan2(v_des_y, v_des_x)
                 yaw_err = (desired_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
 
-                # Forward obstacle detection for steering
-                closest_fwd_obs = None
-                closest_fwd_dist = float('inf')
-                closest_lat = 0.0
-                for obj in ARENA_OBJECTS.values():
-                    dx, dy = obj.x - rx, obj.y - ry
-                    fwd = dx * math.cos(ryaw) + dy * math.sin(ryaw)
-                    lat = -dx * math.sin(ryaw) + dy * math.cos(ryaw)
-                    clearance = math.hypot(dx, dy) - obj.radius - ROVER_RADIUS
-                    if fwd > 0 and clearance < 0.50 and clearance < closest_fwd_dist:
-                        closest_fwd_dist = clearance
-                        closest_fwd_obs = obj
-                        closest_lat = lat
-
-                # Forward wall clearance check
-                cos_y, sin_y = math.cos(ryaw), math.sin(ryaw)
-                wall_fwd_dists = []
-                if cos_y > 1e-4:
-                    wall_fwd_dists.append((ARENA_BOUND - ROVER_RADIUS - rx) / cos_y)
-                elif cos_y < -1e-4:
-                    wall_fwd_dists.append((-ARENA_BOUND + ROVER_RADIUS - rx) / cos_y)
-                if sin_y > 1e-4:
-                    wall_fwd_dists.append((ARENA_BOUND - ROVER_RADIUS - ry) / sin_y)
-                elif sin_y < -1e-4:
-                    wall_fwd_dists.append((-ARENA_BOUND + ROVER_RADIUS - ry) / sin_y)
-                fwd_wall_min = min(wall_fwd_dists) if wall_fwd_dists else float('inf')
-
-                if closest_fwd_obs is not None and closest_fwd_dist < 0.45:
-                    with self.state.lock:
-                        self.state.status_text = "AI PATROL: AVOIDING OBSTACLE"
-                    if closest_lat > 0:  # Obstacle on LEFT -> Steer RIGHT
-                        vl_raw, vr_raw = 4.20, 1.40
-                    else:                # Obstacle on RIGHT -> Steer LEFT
-                        vl_raw, vr_raw = 1.40, 4.20
-                elif fwd_wall_min < 0.45:
-                    with self.state.lock:
-                        self.state.status_text = "AI PATROL: AVOIDING OBSTACLE"
-                    # Steer away from wall toward center
-                    center_yaw = math.atan2(-ry, -rx)
-                    diff = (center_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
-                    if diff > 0:
-                        vl_raw, vr_raw = 1.40, 4.20
-                    else:
-                        vl_raw, vr_raw = 4.20, 1.40
+                # 5. Open-space acceleration & velocity profiling
+                # When no obstacles within 1.2m, ramp linear speed up to MAX_WHEEL_SPEED (8.0 rad/s)
+                # Apply smooth braking when entering 0.6m safety bubble
+                if effective_fwd_clear >= 1.20 and clearance_total >= 0.50:
+                    target_lin = MAX_WHEEL_SPEED
+                    status_msg = "AI PATROL: OPEN-SPACE CRUISING (8.0 RAD/S)"
+                elif effective_fwd_clear > 0.60:
+                    ratio = (effective_fwd_clear - 0.60) / (1.20 - 0.60)
+                    target_lin = 5.20 + ratio * (MAX_WHEEL_SPEED - 5.20)
+                    status_msg = "AI PATROL: WAYPOINT CRUISING"
                 else:
-                    with self.state.lock:
-                        self.state.status_text = "AI PATROL: WAYPOINT CRUISING"
+                    # Immediate 0.6m safety bubble: proportional braking
+                    target_lin = max(3.00, 5.20 * (max(0.10, effective_fwd_clear) / 0.60))
+                    status_msg = "AI PATROL: DWA AVOIDANCE BUBBLE"
 
-                    if abs(yaw_err) > 0.50:  # Pivot in place toward waypoint if large heading error
-                        turn = 4.50 if yaw_err > 0 else -4.50
-                        vl_raw = -turn
-                        vr_raw = turn
-                    else:
-                        base_speed = 4.40 if min_dist > 0.70 else 3.20
-                        turn = max(-2.4, min(2.4, yaw_err * 2.5))
-                        vl_raw = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, base_speed - turn))
-                        vr_raw = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, base_speed + turn))
+                with self.state.lock:
+                    self.state.status_text = status_msg
 
-            # Exponential Moving Average (EMA) low-pass smoothing on wheels to eliminate chatter
-            alpha = 0.40
-            vl = alpha * vl_raw + (1.0 - alpha) * self.prev_ai_vl
-            vr = alpha * vr_raw + (1.0 - alpha) * self.prev_ai_vr
+                # 6. Smooth forward drive and curvature steering (never zero out forward speed)
+                fwd_drive = target_lin * max(0.45, math.cos(yaw_err))
+                steer = max(-4.0, min(4.0, yaw_err * 2.8))
+
+                vl_raw = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, fwd_drive - steer))
+                vr_raw = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, fwd_drive + steer))
+
+            # 7. Dynamic Window Approach: acceleration slew-rate limiting (a_max = 8.0 rad/s^2)
+            a_max = 8.0 * dt
+            vl = self.prev_ai_vl + max(-a_max, min(a_max, vl_raw - self.prev_ai_vl))
+            vr = self.prev_ai_vr + max(-a_max, min(a_max, vr_raw - self.prev_ai_vr))
             self.prev_ai_vl, self.prev_ai_vr = vl, vr
 
         # Mode 3: AI CHASE & INSPECTION ORBIT
