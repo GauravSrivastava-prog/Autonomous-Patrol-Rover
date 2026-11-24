@@ -281,19 +281,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Autonomous Patrol Rover — GTA Mission Control</title>
+  <title>Autonomous Patrol Rover — Sovereign Edge Mission Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #070a10;
-      --card-bg: rgba(0, 0, 0, 0.72);
-      --card-border: rgba(0, 229, 255, 0.35);
+      --bg: #050811;
+      --card-bg: rgba(9, 14, 26, 0.78);
+      --card-bg-elevated: rgba(13, 20, 36, 0.90);
+      --card-border: rgba(0, 229, 255, 0.20);
+      --card-border-glow: rgba(0, 229, 255, 0.45);
       --accent: #00e5ff;
-      --accent-glow: rgba(0, 229, 255, 0.45);
-      --accent-warn: #ffd600;
-      --accent-red: #ff1744;
-      --text: #f1f5f9;
-      --text-muted: #94a3b8;
-      --font-mono: "JetBrains Mono", "SF Mono", "Courier New", Courier, Menlo, Consolas, monospace;
+      --accent-glow: rgba(0, 229, 255, 0.35);
+      --accent-emerald: #00e676;
+      --accent-amber: #ffd600;
+      --accent-rose: #ff1744;
+      --text: #f8fafc;
+      --text-dim: #94a3b8;
+      --text-muted: #64748b;
+      --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
     }
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     html, body {
@@ -321,53 +329,50 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     .frosted {
       background: var(--card-bg);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       border: 1px solid var(--card-border);
-      border-radius: 2px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8), inset 0 0 10px rgba(0, 229, 255, 0.05);
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      transition: border-color 0.25s var(--ease-out), box-shadow 0.25s var(--ease-out);
     }
 
-    /* Top-Left Dock: Depth Map PiP + Neural Accelerator Telemetry (Tactical HUD) */
+    /* Top-Left Dock: Depth PiP + Streamlined Sovereign Telemetry */
     .dock-top-left {
       position: absolute;
       top: 16px;
       left: 16px;
-      width: 275px;
+      width: 280px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 10px;
       z-index: 20;
     }
     .depth-panel {
-      padding: 8px 10px 6px 10px;
+      padding: 8px 10px 8px 10px;
       display: flex;
       flex-direction: column;
       gap: 6px;
-      border-radius: 2px;
     }
     .depth-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 0 1px;
-      font-family: var(--font-mono);
-      font-size: 9.5px;
+      font-size: 9px;
+      font-weight: 700;
       letter-spacing: 0.8px;
-      line-height: 1.3;
     }
     .depth-tag {
-      font-weight: 700;
       color: #ff9100;
     }
     .pip-container {
       position: relative;
       width: 100%;
       aspect-ratio: 16/9;
-      border-radius: 2px;
+      border-radius: 4px;
       overflow: hidden;
-      border: 1px solid rgba(255, 145, 0, 0.85);
-      box-shadow: 0 2px 10px rgba(255, 145, 0, 0.25);
+      border: 1px solid rgba(255, 145, 0, 0.7);
+      box-shadow: 0 2px 12px rgba(255, 145, 0, 0.2);
       background: #000;
     }
     .pip-container img {
@@ -378,151 +383,390 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
     .view-toggle-btn {
       position: absolute;
-      bottom: 4px;
-      right: 4px;
-      background: rgba(0, 0, 0, 0.85);
+      bottom: 6px;
+      right: 6px;
+      background: rgba(5, 8, 17, 0.88);
       border: 1px solid var(--accent);
       color: var(--accent);
       font-family: var(--font-mono);
       font-size: 8.5px;
       font-weight: 700;
       letter-spacing: 0.5px;
-      padding: 3px 6px;
-      border-radius: 2px;
+      padding: 4px 8px;
+      border-radius: 4px;
       cursor: pointer;
-      transition: all 0.15s;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: all 0.2s var(--ease-out);
     }
     .view-toggle-btn:hover {
       background: var(--accent);
-      color: #000;
+      color: #050811;
+      box-shadow: 0 0 10px var(--accent-glow);
     }
 
+    /* Streamlined Telemetry & System Status Card */
     .telemetry-card {
       padding: 10px 12px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      border-radius: 2px;
-      font-family: var(--font-mono);
+      gap: 8px;
     }
-    .badge-pill {
+    .telemetry-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pulse-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      box-shadow: 0 0 8px var(--accent-emerald);
+      animation: pulseGlow 2s infinite ease-in-out;
+    }
+    @keyframes pulseGlow {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+    .card-title {
+      font-size: 9px;
+      font-weight: 800;
+      color: var(--accent);
+      letter-spacing: 1px;
+    }
+    .fps-badge {
+      font-size: 9.5px;
       font-family: var(--font-mono);
+      color: var(--text-dim);
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    /* Minimalist System Status Badge & Info Drawer */
+    .sys-badge-container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(0, 229, 255, 0.25);
+      border-radius: 6px;
+      padding: 5px 8px;
+      transition: border-color 0.2s;
+    }
+    .sys-badge-container:hover {
+      border-color: var(--accent);
+    }
+    .badge-compact {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 9.5px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .badge-tag {
+      font-size: 8px;
+      font-weight: 700;
+      color: var(--accent);
+      background: rgba(0, 229, 255, 0.12);
+      border: 1px solid rgba(0, 229, 255, 0.3);
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    .info-toggle-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 2px 4px;
+      display: flex;
+      align-items: center;
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+    .info-toggle-btn:hover {
+      color: var(--accent);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    /* Expandable System Specs Drawer */
+    .sys-drawer {
+      overflow: hidden;
+      max-height: 120px;
+      opacity: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      padding: 6px 8px;
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 8.5px;
+      transition: max-height 0.3s var(--ease-out), opacity 0.25s ease, padding 0.3s var(--ease-out), margin 0.3s var(--ease-out);
+    }
+    .sys-drawer.collapsed {
+      max-height: 0;
+      opacity: 0;
+      padding-top: 0;
+      padding-bottom: 0;
+      margin: 0;
+      border: none;
+    }
+    .sys-drawer-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .sys-drawer-row .k { color: var(--text-muted); font-weight: 600; }
+    .sys-drawer-row .v { color: var(--accent); font-weight: 700; }
+
+    /* Multimodal Perception Section */
+    .vlm-section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding-top: 8px;
+    }
+    .vlm-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+    }
+    .vlm-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .section-tag {
+      font-size: 9px;
+      font-weight: 800;
+      color: var(--accent);
+      letter-spacing: 0.8px;
+    }
+    .vlm-status-chip {
+      font-size: 8px;
+      font-weight: 800;
+      padding: 1px 5px;
+      border-radius: 3px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .vlm-status-chip.standby {
+      background: rgba(100, 116, 139, 0.2);
+      color: var(--text-muted);
+      border: 1px solid rgba(100, 116, 139, 0.3);
+    }
+    .vlm-status-chip.active {
+      background: rgba(0, 230, 118, 0.15);
+      color: var(--accent-emerald);
+      border: 1px solid rgba(0, 230, 118, 0.4);
+      box-shadow: 0 0 8px rgba(0, 230, 118, 0.25);
+    }
+    .active-target-badge {
       font-size: 9px;
       font-weight: 700;
-      letter-spacing: 0.5px;
-      line-height: 1.4;
-      padding: 4px 8px;
-      border-radius: 2px;
-      background: rgba(0, 0, 0, 0.70);
-      border: 1px solid var(--accent);
-      color: var(--accent);
-      box-shadow: 0 0 8px rgba(0, 229, 255, 0.2);
-      display: inline-block;
-      white-space: normal;
-      word-break: break-word;
+      color: #fff;
+    }
+    .yolo-stat-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--text-dim);
+      background: rgba(0, 0, 0, 0.35);
+      padding: 3px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      transition: all 0.2s;
+    }
+    .yolo-stat-chip.detected {
+      color: #38bdf8;
+      border-color: rgba(56, 189, 248, 0.35);
+      background: rgba(56, 189, 248, 0.08);
+    }
+
+    /* Collapsible VLM Similarity Bars */
+    .vlm-scores-collapsible {
+      overflow: hidden;
+      max-height: 240px;
+      opacity: 1;
+      transition: max-height 0.35s var(--ease-out), opacity 0.25s ease;
+    }
+    .vlm-scores-collapsible.collapsed {
+      max-height: 0;
+      opacity: 0;
     }
     .vlm-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
       font-size: 9px;
-      font-family: var(--font-mono);
-      margin-bottom: 3px;
+      margin-bottom: 4px;
       line-height: 1.3;
     }
     .vlm-bar-bg {
       flex: 1;
-      height: 3px;
+      height: 4px;
       background: rgba(255, 255, 255, 0.08);
-      border-radius: 1px;
+      border-radius: 2px;
       overflow: hidden;
       margin: 0 8px;
     }
     .vlm-bar-fill {
       height: 100%;
-      width: 5%;
-      background: var(--accent);
-      border-radius: 1px;
-      transition: width 0.3s ease;
+      border-radius: 2px;
+      transition: width 0.3s var(--ease-out), background 0.3s ease;
     }
 
-    /* Top-Right Dock: Tactical Mode Dock & Search */
+    /* ── Top-Right Dock: Unified Floating Command Dock ── */
     .dock-top-right {
       position: absolute;
       top: 16px;
       right: 16px;
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 8px;
       z-index: 20;
     }
-    .mode-dock {
+    .unified-command-dock {
       display: flex;
-      gap: 6px;
-      padding: 5px;
-      border-radius: 2px;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      border-radius: 10px;
     }
-    .pill-btn {
-      background: rgba(0, 0, 0, 0.70);
-      color: var(--text);
-      border: 1px solid rgba(0, 229, 255, 0.28);
-      padding: 6px 12px;
-      border-radius: 2px;
-      cursor: pointer;
+    .mode-tabs {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 3px;
+      border-radius: 7px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .dock-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 11px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 5px;
+      color: var(--text-dim);
       font-family: var(--font-mono);
       font-size: 10.5px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      transition: all 0.15s;
-    }
-    .pill-btn:hover {
-      background: rgba(0, 229, 255, 0.22);
-      border-color: var(--accent);
-      color: #fff;
-    }
-    .pill-btn.active {
-      background: var(--accent) !important;
-      color: #000 !important;
-      border-color: var(--accent) !important;
-      box-shadow: 0 0 10px var(--accent-glow);
-    }
-
-    .search-box {
-      display: flex;
-      gap: 6px;
-      padding: 5px;
-      width: 320px;
-      border-radius: 2px;
-    }
-    .search-box input {
-      flex: 1;
-      background: rgba(0, 0, 0, 0.6);
-      border: 1px solid rgba(0, 229, 255, 0.25);
-      color: #fff;
-      padding: 6px 10px;
-      border-radius: 2px;
-      font-family: var(--font-mono);
-      font-size: 11px;
-      outline: none;
-    }
-    .search-box input:focus {
-      border-color: var(--accent);
-    }
-    .search-box button {
-      background: var(--accent);
-      color: #000;
-      border: none;
-      font-family: var(--font-mono);
-      font-weight: 800;
-      padding: 0 14px;
-      border-radius: 2px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
       cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s var(--ease-out);
+    }
+    .dock-tab:hover {
+      background: rgba(0, 229, 255, 0.12);
+      color: #fff;
+      border-color: rgba(0, 229, 255, 0.25);
+      transform: translateY(-1px);
+    }
+    .dock-tab.active {
+      background: var(--accent) !important;
+      color: #050811 !important;
+      font-weight: 800 !important;
+      border-color: var(--accent) !important;
+      box-shadow: 0 0 16px var(--accent-glow);
+      transform: none !important;
+    }
+    .dock-divider-v {
+      width: 1px;
+      height: 22px;
+      background: rgba(255, 255, 255, 0.12);
+      margin: 0 2px;
+    }
+    .dock-search {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid var(--card-border);
+      border-radius: 7px;
+      padding: 2px 3px 2px 8px;
+      width: 250px;
+      transition: width 0.35s var(--ease-out), border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+    }
+    .dock-search:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+      background: rgba(0, 229, 255, 0.04);
+    }
+    .dock-search.chase-active {
+      width: 320px;
+      border-color: var(--accent);
+      box-shadow: 0 0 16px var(--accent-glow);
+      background: rgba(0, 229, 255, 0.08);
+      animation: chasePulse 2.5s infinite ease-in-out;
+    }
+    @keyframes chasePulse {
+      0%, 100% { box-shadow: 0 0 12px var(--accent-glow); }
+      50% { box-shadow: 0 0 20px rgba(0, 229, 255, 0.6); }
+    }
+    .search-input-box {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .search-glyph {
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .dock-search.chase-active .search-glyph {
+      color: var(--accent);
+    }
+    .search-input-box input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #fff;
+      font-family: var(--font-mono);
       font-size: 11px;
+      letter-spacing: 0.2px;
+    }
+    .search-input-box input::placeholder {
+      color: var(--text-muted);
+      font-size: 10px;
+    }
+    .seek-btn {
+      background: var(--accent);
+      color: #050811;
+      border: none;
+      border-radius: 5px;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 800;
       letter-spacing: 0.5px;
+      padding: 6px 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s var(--ease-out);
+      flex-shrink: 0;
+    }
+    .seek-btn:hover {
+      background: #fff;
+      box-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
     }
 
-    /* Bottom-Left Dock: Circular 220px GTA Radar Minimap */
+    /* ── Bottom-Left Dock: Circular Vector Radar & Sleek Status Strip ── */
     .dock-bottom-left {
       position: absolute;
       bottom: 16px;
@@ -533,27 +777,83 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       gap: 8px;
       z-index: 20;
     }
+    .radar-wrapper {
+      position: relative;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      box-shadow: 0 0 24px rgba(0, 229, 255, 0.30), inset 0 0 20px rgba(0, 0, 0, 0.9);
+    }
     #radarCanvas {
       width: 220px;
       height: 220px;
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(10, 18, 30, 0.92) 0%, rgba(5, 8, 14, 0.98) 100%);
-      border: 2px solid var(--accent);
-      box-shadow: 0 0 20px rgba(0, 229, 255, 0.35), inset 0 0 24px rgba(0, 0, 0, 0.85);
       display: block;
     }
-    .status-pill {
-      padding: 6px 12px;
-      font-family: var(--font-mono);
-      font-size: 10px;
-      color: var(--accent);
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      white-space: nowrap;
-      border-radius: 2px;
+    .radar-tag {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 7.5px;
+      font-weight: 800;
+      color: rgba(0, 229, 255, 0.65);
+      letter-spacing: 1.2px;
+      pointer-events: none;
     }
 
-    /* Bottom-Right Dock: Tactile D-Pad & WASD Indicators */
+    /* Sleek Low-Profile Telemetry Status Strip */
+    .telemetry-strip {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 9.5px;
+      letter-spacing: 0.4px;
+      border: 1px solid var(--card-border);
+    }
+    .tel-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+    .tel-lbl {
+      color: var(--text-muted);
+      font-weight: 700;
+      font-size: 8px;
+      letter-spacing: 0.5px;
+    }
+    .tel-val {
+      color: #fff;
+      font-weight: 700;
+      font-family: var(--font-mono);
+    }
+    .tel-sep {
+      width: 1px;
+      height: 12px;
+      background: rgba(255, 255, 255, 0.12);
+    }
+    .status-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .tel-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      box-shadow: 0 0 6px var(--accent-emerald);
+    }
+    .status-text {
+      color: var(--accent);
+      font-weight: 800;
+      letter-spacing: 0.6px;
+    }
+
+    /* ── Bottom-Right Dock: Tactile D-Pad & Controls ── */
     .dock-bottom-right {
       position: absolute;
       bottom: 16px;
@@ -563,7 +863,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .controls-box {
       padding: 10px;
       width: 175px;
-      border-radius: 2px;
+      border-radius: 10px;
     }
     .d-pad {
       display: grid;
@@ -572,9 +872,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
     .d-btn {
       aspect-ratio: 1;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
       color: #fff;
       font-family: var(--font-mono);
       font-size: 12px;
@@ -584,14 +884,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      transition: all 0.1s;
+      transition: all 0.1s var(--ease-out);
     }
-    .d-btn span { font-size: 8px; opacity: 0.7; font-family: var(--font-mono); }
-    .d-btn:hover { background: rgba(0, 229, 255, 0.25); border-color: var(--accent); }
+    .d-btn span { font-size: 7.5px; color: var(--text-muted); font-family: var(--font-mono); }
+    .d-btn:hover {
+      background: rgba(0, 229, 255, 0.18);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
     .d-btn.active {
       background: var(--accent) !important;
-      color: #000 !important;
-      box-shadow: 0 0 12px var(--accent-glow);
+      color: #050811 !important;
+      box-shadow: 0 0 14px var(--accent-glow);
+      transform: scale(0.95);
+    }
+    .d-btn.active span { color: #050811; }
+
+    /* Responsive scaling for standard displays */
+    @media (max-width: 900px) {
+      .dock-search { width: 180px; }
+      .dock-search.chase-active { width: 230px; }
+      .dock-top-left { width: 240px; }
     }
   </style>
 </head>
@@ -606,12 +919,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <!-- Glassmorphism Floating HUD Layer -->
   <div class="hud-layer">
     
-    <!-- Dock Top-Left: Depth Map PiP + Hardware Accelerator Telemetry -->
+    <!-- Dock Top-Left: Depth Map PiP + Streamlined Sovereign Telemetry -->
     <div class="dock-top-left interactive">
       <div class="frosted depth-panel">
         <div class="depth-header">
           <span class="depth-tag">MONOCULAR DEPTH (MAGMA)</span>
-          <span style="font-size:8px; color:var(--text-muted); font-family:monospace;">0.1 - 5.0m</span>
+          <span style="font-size:8px; color:var(--text-muted); font-family:var(--font-mono);">0.1 - 5.0m</span>
         </div>
         <div class="pip-container">
           <img id="depthFeed" src="/depth_feed" alt="Monocular Depth Feed" />
@@ -620,43 +933,129 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
 
       <div class="frosted telemetry-card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
-          <span style="font-size:8.5px; font-weight:700; color:var(--accent); letter-spacing:1px; text-transform:uppercase;">SYSTEM STATUS</span>
-          <span id="fpsCounter" style="font-size:9.5px; font-family:var(--font-mono); color:var(--text-muted); font-weight:700;">30.0 FPS</span>
+        <div class="telemetry-header">
+          <div class="brand-wrap">
+            <span class="pulse-dot"></span>
+            <span class="card-title">SOVEREIGN EDGE CORE</span>
+          </div>
+          <span id="fpsCounter" class="fps-badge">30.0 FPS</span>
         </div>
-        <div id="hwBadge" class="badge-pill">🍎 APPLE MPS ACCELERATED</div>
-        <div style="font-size:9.5px; font-weight:700; color:var(--accent); font-family:var(--font-mono); margin-top:2px; display:flex; justify-content:space-between; align-items:center;">
-          <span>MULTIMODAL VLM MATCH</span>
-          <span id="vlmActiveTarget" style="color:#fff; font-family:var(--font-mono);">--</span>
+
+        <!-- Minimalist System Status Badge -->
+        <div class="sys-badge-container">
+          <div id="hwBadge" class="badge-compact" title="Local Silicon Acceleration">
+            <span class="badge-tag">LIVE</span>
+            <span id="hwBadgeText">MPS ACCELERATED</span>
+          </div>
+          <button id="btnSysDetails" class="info-toggle-btn" title="Toggle Technical Hardware Specs">
+            <svg viewBox="0 0 16 16" width="12" height="12"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="currentColor" d="M8 7v4m0-6v1.2"/></svg>
+          </button>
         </div>
-        <div id="yoloCount" style="font-size:9px; font-family:var(--font-mono); color:#38bdf8; font-weight:700;">🎯 YOLO DETECTIONS: 0 IN VIEW</div>
-        <div id="vlmScoresList">
-          <!-- Dynamic similarity bars -->
+
+        <!-- Expandable System Specs Drawer -->
+        <div id="sysDetailsDrawer" class="sys-drawer collapsed">
+          <div class="sys-drawer-row"><span class="k">ACCELERATOR:</span><span id="sysDeviceVal" class="v">Apple Metal (MPS)</span></div>
+          <div class="sys-drawer-row"><span class="k">YOLO CORE:</span><span id="sysYoloVal" class="v">rover_yolo.pt (6.2 MB)</span></div>
+          <div class="sys-drawer-row"><span class="k">CLIP CACHE:</span><span id="sysClipVal" class="v">clip_semantic_cache.pkl</span></div>
+          <div class="sys-drawer-row"><span class="k">TELEMETRY:</span><span id="sysWsVal" class="v">WebSocket 30Hz LIVE</span></div>
+        </div>
+
+        <!-- Multimodal Perception Section -->
+        <div class="vlm-section">
+          <div class="vlm-header" id="vlmHeaderToggle" title="Click to toggle similarity breakdown">
+            <div class="vlm-title-wrap">
+              <span class="section-tag">MULTIMODAL PERCEPTION</span>
+              <span id="vlmStateIndicator" class="vlm-status-chip standby">STANDBY</span>
+            </div>
+            <span id="vlmActiveTarget" class="active-target-badge">--</span>
+          </div>
+
+          <div id="yoloCount" class="yolo-stat-chip">
+            <span style="font-size:11px;">⛶</span>
+            <span id="yoloCountText">0 DETECTIONS IN VIEW</span>
+          </div>
+
+          <!-- Dynamic Similarity Bars (Collapsible when idle) -->
+          <div id="vlmScoresWrapper" class="vlm-scores-collapsible collapsed">
+            <div id="vlmScoresList">
+              <!-- Dynamic similarity bars -->
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Dock Top-Right: Mode Selection Dock & Natural Language Search -->
+    <!-- Dock Top-Right: Unified Floating Command Dock -->
     <div class="dock-top-right interactive">
-      <div class="frosted mode-dock">
-        <button id="btnPatrol" class="pill-btn active">🧠 AI Patrol</button>
-        <button id="btnChase" class="pill-btn">🎯 AI Chase</button>
-        <button id="btnManual" class="pill-btn">🕹️ Manual</button>
-        <button id="btnReset" class="pill-btn">🔄 Reset (0,0)</button>
-        <a href="https://autonomous-patrol-rover.vercel.app" class="pill-btn" style="text-decoration:none; color:var(--accent); display:inline-flex; align-items:center;" target="_blank" rel="noopener noreferrer">📖 Manifesto</a>
-      </div>
+      <div class="frosted unified-command-dock">
+        <div class="mode-tabs" role="tablist">
+          <button id="btnPatrol" class="dock-tab active" title="Autonomous Waypoint Patrol">
+            <span>🧠</span>
+            <span>AI Patrol</span>
+          </button>
+          <button id="btnChase" class="dock-tab" title="Target Visual Homing & Pursuit">
+            <span>🎯</span>
+            <span>AI Chase</span>
+          </button>
+          <button id="btnManual" class="dock-tab" title="Manual Teleoperation (WASD)">
+            <span>🕹️</span>
+            <span>Manual</span>
+          </button>
+          <div class="dock-divider-v"></div>
+          <button id="btnReset" class="dock-tab" title="Reset Rover to Origin (0,0)">
+            <span>🔄</span>
+            <span>Reset</span>
+          </button>
+          <a href="https://autonomous-patrol-rover.vercel.app" class="dock-tab" target="_blank" rel="noopener noreferrer" title="Technical Manifesto">
+            <span>📖</span>
+            <span>Manifesto</span>
+            <svg viewBox="0 0 10 10" width="8" height="8"><path fill="none" stroke="currentColor" stroke-width="1.2" d="M2 8L8 2M3 2h5v5"/></svg>
+          </a>
+        </div>
 
-      <div class="frosted search-box">
-        <input id="promptInput" type="text" placeholder="Seek target (e.g. blue chair, wooden crate)..." />
-        <button id="btnSeek">Seek</button>
+        <div class="dock-divider-v"></div>
+
+        <!-- Integrated Dynamic Search Box -->
+        <div class="dock-search" id="dockSearch">
+          <div class="search-input-box">
+            <svg class="search-glyph" viewBox="0 0 16 16" width="12" height="12"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6.5 11.5a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm3.5-1.5 4 4"/></svg>
+            <input id="promptInput" type="text" placeholder="Seek target (e.g. blue chair, crate)..." autocomplete="off" />
+          </div>
+          <button id="btnSeek" class="seek-btn" title="Initiate Target Pursuit">
+            <span>Seek</span>
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- Dock Bottom-Left: Circular 220px GTA Radar Minimap -->
+    <!-- Dock Bottom-Left: Modern Vector Radar & Telemetry Strip -->
     <div class="dock-bottom-left interactive">
-      <canvas id="radarCanvas" width="220" height="220"></canvas>
-      <div id="telemetryStatus" class="frosted status-pill">
-        POS: (0.00, 0.00) | YAW: 0.0° | SPEED: 0.0/0.0 | INITIALIZING...
+      <div class="radar-wrapper">
+        <canvas id="radarCanvas" width="220" height="220"></canvas>
+        <div class="radar-tag">ARENA RADAR 2.0m</div>
+      </div>
+      
+      <!-- Sleek Low-Profile Telemetry Status Strip -->
+      <div id="telemetryStrip" class="frosted telemetry-strip">
+        <div class="tel-chip">
+          <span class="tel-lbl">POS</span>
+          <span id="telPos" class="tel-val">0.00, 0.00</span>
+        </div>
+        <div class="tel-sep"></div>
+        <div class="tel-chip">
+          <span class="tel-lbl">HDG</span>
+          <span id="telYaw" class="tel-val">0.0°</span>
+        </div>
+        <div class="tel-sep"></div>
+        <div class="tel-chip">
+          <span class="tel-lbl">SPD</span>
+          <span id="telSpd" class="tel-val">0.0 / 0.0</span>
+        </div>
+        <div class="tel-sep"></div>
+        <div class="tel-chip status-chip">
+          <span class="tel-dot"></span>
+          <span id="telStatus" class="status-text">INITIALIZING</span>
+        </div>
       </div>
     </div>
 
@@ -668,7 +1067,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           <button id="dpadFwd" class="d-btn">▲<span>W</span></button>
           <div></div>
           <button id="dpadLeft" class="d-btn">◄<span>A</span></button>
-          <button id="dpadStop" class="d-btn" style="background:rgba(239,68,68,0.3); border-color:#ef4444;">■<span>SPC</span></button>
+          <button id="dpadStop" class="d-btn" style="background:rgba(239,68,68,0.25); border-color:#ef4444;">■<span>SPC</span></button>
           <button id="dpadRight" class="d-btn">►<span>D</span></button>
           <div></div>
           <button id="dpadBack" class="d-btn">▼<span>S</span></button>
@@ -683,6 +1082,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     // ── WebSocket Telemetry Bridge & Dual-Channel Dispatcher ──
     let ws = null;
     let wsConnected = false;
+    let userExpandedVlm = false;
+    let userExpandedSys = false;
 
     function sendWs(msgObj) {
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -699,10 +1100,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     window.setMode = function(m) {
       sendWs({ action: 'SET_MODE', mode: m });
       window.postApi('/set_mode/' + m);
-      document.querySelectorAll('.mode-dock button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.dock-tab, .pill-btn').forEach(b => b.classList.remove('active'));
       if (m === 'AI_PATROL') document.getElementById('btnPatrol')?.classList.add('active');
       if (m === 'AI_CHASE') document.getElementById('btnChase')?.classList.add('active');
       if (m === 'MANUAL') document.getElementById('btnManual')?.classList.add('active');
+
+      // Dynamic search bar expansion & focus on AI_CHASE
+      const searchWrap = document.getElementById('dockSearch');
+      if (searchWrap) {
+        if (m === 'AI_CHASE') {
+          searchWrap.classList.add('chase-active');
+          document.getElementById('promptInput')?.focus();
+        } else {
+          searchWrap.classList.remove('chase-active');
+        }
+      }
     };
 
     window.setView = function(v) {
@@ -741,16 +1153,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     function manual(cmd) { return window.manual(cmd); }
     function sendTarget() { return window.sendTarget(); }
 
-    // ── Radar Minimap Drawing Routine (Circular Mask, Laser Guide & Target Lock Reticles) ──
+    // ── High-Contrast Radar Minimap Vector Drawing Routine ──
     const ARENA_RADAR_LANDMARKS = [
-      { id: 'CONE', name: 'CONE', x: 1.15, y: 1.00, color: '#ff3d00' },
+      { id: 'CONE', name: 'CONE', x: 1.15, y: 1.00, color: '#ff5722' },
       { id: 'PLANT', name: 'PLANT', x: -1.05, y: 1.05, color: '#00e676' },
       { id: 'CHAIR', name: 'CHAIR', x: 0.00, y: -1.15, color: '#00e5ff' },
-      { id: 'CRATE1', name: 'CRATE 1', x: -1.15, y: -0.95, color: '#d97706' },
-      { id: 'CRATE2', name: 'CRATE 2', x: 1.15, y: -0.95, color: '#d97706' },
-      { id: 'HAZARD', name: 'HAZARD', x: 0.85, y: 0.15, color: '#ffd600' },
+      { id: 'CRATE1', name: 'CRATE 1', x: -1.15, y: -0.95, color: '#ffb300' },
+      { id: 'CRATE2', name: 'CRATE 2', x: 1.15, y: -0.95, color: '#ffb300' },
+      { id: 'HAZARD', name: 'HAZARD', x: 0.85, y: 0.15, color: '#ff1744' },
     ];
 
+    let radarSweepAngle = 0;
     function drawRadar(rx = 0, ry = 0, ryaw = 0.35, trail = [], activeTarget = '') {
       const canvas = document.getElementById('radarCanvas');
       if (!canvas) return;
@@ -761,49 +1174,84 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const cx = 110, cy = 110, maxR = 108;
       const scale = 46.0;
 
-      // 1. Strict Circular Clipping so NO arena boundaries or trails bleed over
+      // Strict Circular Masking
       ctx.save();
       ctx.beginPath();
       ctx.arc(cx, cy, maxR, 0, Math.PI * 2);
       ctx.clip();
 
-      // Subtle Radar CRT Background
-      ctx.fillStyle = 'rgba(7, 10, 16, 0.95)';
+      // Cosmic Deep Radial Background
+      const bgGrad = ctx.createRadialGradient(cx, cy, 10, cx, cy, maxR);
+      bgGrad.addColorStop(0, 'rgba(8, 14, 28, 0.96)');
+      bgGrad.addColorStop(0.7, 'rgba(5, 9, 18, 0.98)');
+      bgGrad.addColorStop(1, 'rgba(2, 4, 8, 1.0)');
+      ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, w, h);
 
-      // Concentric Range Rings (0.6m, 1.2m, 1.8m)
-      [0.6, 1.2, 1.8].forEach(r => {
-        ctx.strokeStyle = 'rgba(0, 229, 255, 0.18)';
+      // Dynamic Subtle Sweeping Sector Beam
+      radarSweepAngle = (radarSweepAngle + 0.035) % (Math.PI * 2);
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, maxR, radarSweepAngle - 0.45, radarSweepAngle);
+      ctx.closePath();
+      const sweepGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
+      sweepGrad.addColorStop(0, 'rgba(0, 229, 255, 0.22)');
+      sweepGrad.addColorStop(1, 'rgba(0, 229, 255, 0.01)');
+      ctx.fillStyle = sweepGrad;
+      ctx.fill();
+
+      // Leading sweep line
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(radarSweepAngle) * maxR, cy + Math.sin(radarSweepAngle) * maxR);
+      ctx.stroke();
+      ctx.restore();
+
+      // Concentric Range Rings (0.5m, 1.0m, 1.5m, 2.0m)
+      [0.5, 1.0, 1.5, 2.0].forEach(r => {
+        ctx.strokeStyle = r === 2.0 ? 'rgba(0, 229, 255, 0.28)' : 'rgba(0, 229, 255, 0.12)';
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.arc(cx, cy, r * scale, 0, Math.PI * 2);
         ctx.stroke();
 
-        ctx.fillStyle = 'rgba(0, 229, 255, 0.45)';
-        ctx.font = '7px monospace';
-        ctx.fillText(`${r}m`, cx + 2, cy - r * scale + 8);
+        if (r < 2.0) {
+          ctx.fillStyle = 'rgba(0, 229, 255, 0.5)';
+          ctx.font = '7px monospace';
+          ctx.fillText(`${r}m`, cx + 2, cy - r * scale + 8);
+        }
       });
 
-      // Axis Crosshairs
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+      // Compass Crosshairs & Cardinal Labels
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(cx - maxR, cy); ctx.lineTo(cx + maxR, cy);
       ctx.moveTo(cx, cy - maxR); ctx.lineTo(cx, cy + maxR);
       ctx.stroke();
 
-      // Dashed 4m Arena Boundary (x: -2 to 2, y: -2 to 2)
-      ctx.strokeStyle = 'rgba(0, 229, 255, 0.28)';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.font = 'bold 7px monospace';
+      ctx.fillText('N', cx - 2.5, cy - maxR + 12);
+      ctx.fillText('S', cx - 2.5, cy + maxR - 6);
+      ctx.fillText('E', cx + maxR - 11, cy + 2.5);
+      ctx.fillText('W', cx - maxR + 5, cy + 2.5);
+
+      // Dashed 4m Arena Boundary (±2.0m)
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.25)';
       ctx.lineWidth = 1.2;
       ctx.setLineDash([4, 4]);
       const bSize = 2.0 * scale;
       ctx.strokeRect(cx - bSize, cy - bSize, bSize * 2, bSize * 2);
       ctx.setLineDash([]);
 
-      // Historical Path Trail (Clean & Faint)
+      // Historical Path Trail (Clean Gradient Polyline)
       if (trail && trail.length > 1) {
-        ctx.strokeStyle = 'rgba(0, 229, 255, 0.4)';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
+        ctx.lineWidth = 1.6;
         ctx.beginPath();
         trail.forEach((pt, i) => {
           const tx = cx + pt[0] * scale, ty = cy - pt[1] * scale;
@@ -816,21 +1264,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const rovX = cx + rx * scale;
       const rovY = cy - ry * scale;
 
-      // Forward 60-degree Camera FOV Sector Cone
+      // Forward 60-degree FOV Sector Cone
       ctx.save();
       ctx.translate(rovX, rovY);
       ctx.rotate(-ryaw);
-      ctx.fillStyle = 'rgba(0, 229, 255, 0.10)';
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.12)';
       ctx.beginPath();
       ctx.moveTo(0, 0);
       ctx.arc(0, 0, 48, -Math.PI / 6 - Math.PI / 2, Math.PI / 6 - Math.PI / 2);
       ctx.closePath();
       ctx.fill();
 
-      // ── Forward Laser Guide ──
+      // Forward Laser Guide
       const laserGrad = ctx.createLinearGradient(0, 0, 0, -45);
       laserGrad.addColorStop(0, 'rgba(0, 229, 255, 0.95)');
-      laserGrad.addColorStop(0.7, 'rgba(0, 229, 255, 0.4)');
+      laserGrad.addColorStop(0.7, 'rgba(0, 229, 255, 0.35)');
       laserGrad.addColorStop(1, 'rgba(0, 229, 255, 0)');
       ctx.strokeStyle = laserGrad;
       ctx.lineWidth = 1.8;
@@ -839,15 +1287,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       ctx.lineTo(0, -45);
       ctx.stroke();
 
-      // Laser Guide Target Tick
-      ctx.strokeStyle = 'rgba(0, 229, 255, 0.7)';
+      // Laser Tick
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.8)';
       ctx.beginPath();
       ctx.moveTo(-3, -45);
       ctx.lineTo(3, -45);
       ctx.stroke();
       ctx.restore();
 
-      // ── Object Blips (CONE, PLANT, CHAIR, CRATE, HAZARD) ──
+      // High-Contrast Landmark Blips
       const targetStr = (activeTarget || '').toLowerCase();
       ARENA_RADAR_LANDMARKS.forEach(lm => {
         const px = cx + lm.x * scale;
@@ -858,22 +1306,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           lm.name.toLowerCase().includes(targetStr)
         );
 
-        // Blip outer halo & dot
-        ctx.fillStyle = lm.color;
+        // Blip Halo Glow
+        ctx.fillStyle = isLocked ? 'rgba(0, 230, 118, 0.35)' : 'rgba(255, 255, 255, 0.15)';
         ctx.beginPath();
-        ctx.arc(px, py, isLocked ? 5.5 : 4, 0, Math.PI * 2);
+        ctx.arc(px, py, isLocked ? 7 : 5, 0, Math.PI * 2);
         ctx.fill();
 
-        // Target Lock Reticle if this is the active chase target
+        // Blip Core
+        ctx.fillStyle = lm.color;
+        ctx.beginPath();
+        ctx.arc(px, py, isLocked ? 5 : 3.8, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Target Lock Reticle
         if (isLocked) {
           ctx.strokeStyle = '#00e676';
-          ctx.lineWidth = 1.5;
-          const rSize = 10;
+          ctx.lineWidth = 1.4;
+          const rSize = 9;
           ctx.beginPath();
-          ctx.arc(px, py, 9, 0, Math.PI * 2);
+          ctx.arc(px, py, 8, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Lock reticle corner brackets
+          // Lock corner ticks
           const c = 3;
           ctx.beginPath();
           ctx.moveTo(px - rSize, py - rSize + c); ctx.lineTo(px - rSize, py - rSize); ctx.lineTo(px - rSize + c, py - rSize);
@@ -882,30 +1336,32 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           ctx.moveTo(px + rSize - c, py + rSize); ctx.lineTo(px + rSize, py + rSize); ctx.lineTo(px + rSize, py + rSize - c);
           ctx.stroke();
 
-          // "LOCK" indicator
           ctx.fillStyle = '#00e676';
           ctx.font = 'bold 7px monospace';
-          ctx.fillText('LOCK', px - 8, py - 12);
+          ctx.fillText('LOCK', px - 8, py - 11);
         }
 
-        // Clean label badge
+        // Name Label Pill
+        ctx.fillStyle = 'rgba(5, 8, 17, 0.75)';
+        const lw = lm.name.length * 5 + 6;
+        ctx.fillRect(px + 6, py - 5, lw, 10);
         ctx.fillStyle = isLocked ? '#00e676' : '#cbd5e1';
-        ctx.font = isLocked ? 'bold 8px monospace' : '7.5px monospace';
-        ctx.fillText(lm.name, px + 7, py + 3);
+        ctx.font = isLocked ? 'bold 7.5px monospace' : '7px monospace';
+        ctx.fillText(lm.name, px + 8, py + 3);
       });
 
-      // ── Rover Center Point (High-Visibility Chevron + Anchor Core) ──
+      // Rover Center Marker (Aerodynamic Chevron + Bright Core)
       ctx.save();
       ctx.translate(rovX, rovY);
       ctx.rotate(-ryaw);
 
-      // Outer glow
-      ctx.fillStyle = 'rgba(0, 229, 255, 0.22)';
+      // Chevron Glow
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.3)';
       ctx.beginPath();
-      ctx.arc(0, 0, 7.5, 0, Math.PI * 2);
+      ctx.arc(0, 0, 8, 0, Math.PI * 2);
       ctx.fill();
 
-      // Sharp Chevron
+      // Sharp Dual-Tone Chevron
       ctx.fillStyle = '#00e5ff';
       ctx.beginPath();
       ctx.moveTo(0, -9.5);
@@ -915,23 +1371,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       ctx.closePath();
       ctx.fill();
 
-      // Core anchor dot
+      // Core Anchor Dot
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       ctx.arc(0, 0, 1.8, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
 
-      ctx.restore(); // Restore circular clip
+      ctx.restore(); // Restore clip
     }
 
-    // Initial render of minimap
+    // Initial draw
     drawRadar(0, 0, 0.35, []);
 
-    // ── Vector Bounding Box Overlay for HUD ──
-    // Synchronized with core_engine._render_frames: OpenCV renders high-precision bounding boxes
-    // and tactical pills directly onto the 1280x720 video feed (disp_frame). We clear the overlay canvas
-    // to prevent dual-render collision, object-fit crop drift, and WebSocket-MJPEG timing offsets.
+    // ── Vector Bounding Box Overlay ──
     function drawBBoxOverlay(detections, target) {
       const canvas = document.getElementById('bboxCanvas');
       if (!canvas) return;
@@ -948,43 +1401,137 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     function applyTelemetry(d) {
       if (!d) return;
 
-      // Status Pill
+      // 1. Sleek Telemetry Status Strip Readouts
+      const telPos = document.getElementById('telPos');
+      if (telPos && d.x !== undefined && d.y !== undefined) {
+        telPos.textContent = `${d.x >= 0 ? '+' : ''}${d.x.toFixed(2)}, ${d.y >= 0 ? '+' : ''}${d.y.toFixed(2)}`;
+      }
+      const telYaw = document.getElementById('telYaw');
+      if (telYaw && d.yaw_deg !== undefined) {
+        telYaw.textContent = `${d.yaw_deg.toFixed(1)}°`;
+      }
+      const telSpd = document.getElementById('telSpd');
+      if (telSpd && d.speed_l !== undefined && d.speed_r !== undefined) {
+        telSpd.textContent = `${d.speed_l.toFixed(1)} / ${d.speed_r.toFixed(1)}`;
+      }
+      const telStatus = document.getElementById('telStatus');
+      if (telStatus && d.status) {
+        telStatus.textContent = d.status.toUpperCase();
+      }
+      // Backward compatibility for legacy telemetryStatus element
       const statusEl = document.getElementById('telemetryStatus');
       if (statusEl) {
         statusEl.textContent = `POS: (${d.x.toFixed(2)}, ${d.y.toFixed(2)}) | YAW: ${d.yaw_deg}° | SPD: ${d.speed_l}/${d.speed_r} | ${d.status.toUpperCase()}`;
       }
 
-      // Hardware & FPS Badge
-      const hwEl = document.getElementById('hwBadge');
-      if (hwEl && d.neural_badge) {
-        hwEl.textContent = (wsConnected ? '⚡ WS LIVE | ' : '') + d.neural_badge;
-      }
-      const fpsEl = document.getElementById('fpsCounter');
-      if (fpsEl && d.fps) fpsEl.textContent = `${d.fps.toFixed(1)} FPS`;
-      const yoloCountEl = document.getElementById('yoloCount');
-      if (yoloCountEl && d.yolo_detections !== undefined) {
-        yoloCountEl.textContent = `🎯 YOLO DETECTIONS: ${d.yolo_detections.length} IN VIEW`;
+      // 2. Hardware Accelerator Badge & Spec Drawer
+      if (d.neural_badge) {
+        const raw = d.neural_badge;
+        let dev = 'APPLE MPS';
+        if (raw.includes('CUDA')) dev = 'NVIDIA CUDA';
+        else if (raw.includes('MPS')) dev = 'APPLE MPS';
+        else if (raw.includes('CPU')) dev = 'CPU ENGINE';
+
+        const hwText = document.getElementById('hwBadgeText');
+        if (hwText) hwText.textContent = `${dev} ACCELERATED`;
+
+        let yoloFile = 'rover_yolo.pt';
+        let clipFile = 'clip_semantic_cache.pkl';
+        raw.split('|').forEach(part => {
+          const p = part.trim();
+          if (p.startsWith('YOLO:')) yoloFile = p.replace('YOLO:', '').trim();
+          if (p.startsWith('CLIP:')) clipFile = p.replace('CLIP:', '').trim();
+        });
+
+        const sysDev = document.getElementById('sysDeviceVal');
+        if (sysDev) sysDev.textContent = dev;
+        const sysYolo = document.getElementById('sysYoloVal');
+        if (sysYolo) sysYolo.textContent = yoloFile;
+        const sysClip = document.getElementById('sysClipVal');
+        if (sysClip) sysClip.textContent = clipFile;
       }
 
-      // Mode Button Sync
+      // FPS Counter
+      const fpsEl = document.getElementById('fpsCounter');
+      if (fpsEl && d.fps) fpsEl.textContent = `${d.fps.toFixed(1)} FPS`;
+
+      // YOLO Detection Chip
+      const yoloCountEl = document.getElementById('yoloCount');
+      const yoloText = document.getElementById('yoloCountText');
+      const detCount = d.yolo_detections !== undefined ? d.yolo_detections.length : 0;
+      if (yoloText) yoloText.textContent = `${detCount} IN VIEW`;
+      if (yoloCountEl) {
+        if (detCount > 0) yoloCountEl.classList.add('detected');
+        else yoloCountEl.classList.remove('detected');
+      }
+
+      // 3. Mode Tabs Sync & Dynamic Search Bar Highlighting
       if (d.mode) {
-        document.querySelectorAll('.mode-dock button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.dock-tab, .pill-btn').forEach(b => b.classList.remove('active'));
         if (d.mode === 'AI_PATROL') document.getElementById('btnPatrol')?.classList.add('active');
         else if (d.mode === 'AI_CHASE') document.getElementById('btnChase')?.classList.add('active');
         else if (d.mode === 'MANUAL') document.getElementById('btnManual')?.classList.add('active');
+
+        const searchWrap = document.getElementById('dockSearch');
+        if (searchWrap) {
+          if (d.mode === 'AI_CHASE') searchWrap.classList.add('chase-active');
+          else searchWrap.classList.remove('chase-active');
+        }
       }
 
-      // View Mode Sync
+      // 4. View Mode Sync
       if (d.view_mode && d.view_mode !== curView) {
         curView = d.view_mode;
         const btn = document.getElementById('btnViewToggle');
         if (btn) btn.textContent = curView === 'TPP' ? '🎥 POV: 3RD PERSON' : '🎥 POV: 1ST PERSON';
       }
 
-      // Draw Minimap
+      // 5. Draw Modern Radar Minimap
       drawRadar(d.x, d.y, (d.yaw_deg || 0) * Math.PI / 180, d.trail, d.target);
 
-      // Update VLM Confidence Bars
+      // 6. Dynamic Multimodal VLM Similarity Display (Hidden when idle, dynamic on query/chase)
+      const hasTarget = d.target && d.target !== 'NONE' && d.target !== 'Searching...';
+      const isChase = d.mode === 'AI_CHASE';
+      const hasDetections = detCount > 0;
+      const isPerceptionActive = hasTarget || isChase || hasDetections || userExpandedVlm;
+
+      const vlmWrapper = document.getElementById('vlmScoresWrapper');
+      const vlmIndicator = document.getElementById('vlmStateIndicator');
+      const activeLabel = document.getElementById('vlmActiveTarget');
+
+      if (vlmWrapper) {
+        if (isPerceptionActive) {
+          vlmWrapper.classList.remove('collapsed');
+        } else {
+          vlmWrapper.classList.add('collapsed');
+        }
+      }
+
+      if (vlmIndicator) {
+        if (isChase) {
+          vlmIndicator.textContent = 'TRACKING';
+          vlmIndicator.className = 'vlm-status-chip active';
+        } else if (hasDetections) {
+          vlmIndicator.textContent = 'SWEEPING';
+          vlmIndicator.className = 'vlm-status-chip active';
+        } else if (hasTarget) {
+          vlmIndicator.textContent = 'LOCKED';
+          vlmIndicator.className = 'vlm-status-chip active';
+        } else {
+          vlmIndicator.textContent = 'STANDBY';
+          vlmIndicator.className = 'vlm-status-chip standby';
+        }
+      }
+
+      if (activeLabel) {
+        if (hasTarget) {
+          const confPct = d.target_conf ? Math.round(d.target_conf * 100) : (d.vlm_scores && d.target_key && d.vlm_scores[d.target_key] ? Math.round(d.vlm_scores[d.target_key] * 100) : 94);
+          activeLabel.textContent = `${d.target.split(' ')[0].toUpperCase()} ${confPct}%`;
+        } else {
+          activeLabel.textContent = '--';
+        }
+      }
+
       if (d.vlm_scores) {
         const container = document.getElementById('vlmScoresList');
         if (container) {
@@ -1002,14 +1549,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             `;
           }).join('');
         }
-        if (d.target && d.target !== 'NONE') {
-          const activeLabel = document.getElementById('vlmActiveTarget');
-          const confPct = d.target_conf ? Math.round(d.target_conf * 100) : (d.vlm_scores && d.target_key && d.vlm_scores[d.target_key] ? Math.round(d.vlm_scores[d.target_key] * 100) : 94);
-          if (activeLabel) activeLabel.textContent = `${d.target.split(' ')[0].toUpperCase()} ${confPct}%`;
-        }
       }
 
-      // Draw Vector Bounding Boxes on Overlay Canvas
+      // Clear overlay canvas
       drawBBoxOverlay(d.yolo_detections, d.target);
     }
 
@@ -1024,10 +1566,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         ws.onopen = () => {
           wsConnected = true;
           console.log('⚡ [HUD] WebSocket connected to real-time telemetry stream');
-          const badge = document.getElementById('hwBadge');
-          if (badge && !badge.textContent.includes('⚡ WS LIVE')) {
-            badge.textContent = '⚡ WS LIVE | ' + badge.textContent;
-          }
+          const sysWs = document.getElementById('sysWsVal');
+          if (sysWs) sysWs.textContent = 'WebSocket 30Hz LIVE';
         };
 
         ws.onmessage = (event) => {
@@ -1053,7 +1593,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
     connectWebSocket();
 
-    // ── HTTP Polling Fallback (Runs only if WebSocket drops) ──
+    // ── HTTP Polling Fallback ──
     async function pollTelemetryFallback() {
       if (!wsConnected) {
         try {
@@ -1068,67 +1608,51 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
     setTimeout(pollTelemetryFallback, 1000);
 
-    // ── Vision Feed Self-Healing Watchdog & Double-Buffered Polling Fallback ──
+    // ── Vision Feed Self-Healing Watchdog ──
     let isVisionPollingFallback = false;
-
     function engageVisionPollingFallback() {
       if (isVisionPollingFallback) return;
       isVisionPollingFallback = true;
-      console.warn('⚡ [HUD] MJPEG stream stalled/unrendered. Activating double-buffered snapshot polling fallback.');
+      console.warn('⚡ [HUD] Activating double-buffered snapshot polling fallback.');
 
       const rgbImg = document.getElementById('rgbFeed');
       const depthImg = document.getElementById('depthFeed');
-
       let busy = false;
+
       function pollVisionStep() {
         if (busy) return;
         busy = true;
         const now = Date.now();
-
         let pending = 2;
         const onFrameLoaded = () => {
           pending--;
-          if (pending <= 0) {
-            busy = false;
-          }
+          if (pending <= 0) busy = false;
         };
 
         if (rgbImg) {
           const nextRgb = new Image();
-          nextRgb.onload = () => {
-            rgbImg.src = nextRgb.src;
-            onFrameLoaded();
-          };
+          nextRgb.onload = () => { rgbImg.src = nextRgb.src; onFrameLoaded(); };
           nextRgb.onerror = onFrameLoaded;
           nextRgb.src = '/video_frame.jpg?t=' + now;
-        } else {
-          onFrameLoaded();
-        }
+        } else { onFrameLoaded(); }
 
         if (depthImg) {
           const nextDepth = new Image();
-          nextDepth.onload = () => {
-            depthImg.src = nextDepth.src;
-            onFrameLoaded();
-          };
+          nextDepth.onload = () => { depthImg.src = nextDepth.src; onFrameLoaded(); };
           nextDepth.onerror = onFrameLoaded;
           nextDepth.src = '/depth_frame.jpg?t=' + now;
-        } else {
-          onFrameLoaded();
-        }
+        } else { onFrameLoaded(); }
       }
 
       pollVisionStep();
-      setInterval(pollVisionStep, 40); // Smooth ~25 FPS polling fallback
+      setInterval(pollVisionStep, 40);
     }
 
-    // Attach immediate error and 1.5s unrendered detection
     const rgbEl = document.getElementById('rgbFeed');
     const depthEl = document.getElementById('depthFeed');
     if (rgbEl) rgbEl.addEventListener('error', engageVisionPollingFallback);
     if (depthEl) depthEl.addEventListener('error', engageVisionPollingFallback);
 
-    // Watchdog check at 1.5s: if images have not decoded (naturalWidth is 0), engage fallback
     setTimeout(() => {
       const rgbUnrendered = !rgbEl || rgbEl.naturalWidth === 0;
       const depthUnrendered = !depthEl || depthEl.naturalWidth === 0;
@@ -1137,8 +1661,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
     }, 1500);
 
-    // ── Event Handlers & Tactile D-Pad ──
+    // ── Event Handlers & Micro-Interactions ──
     function initEvents() {
+      // Mode Buttons
       document.getElementById('btnPatrol')?.addEventListener('click', () => window.setMode('AI_PATROL'));
       document.getElementById('btnChase')?.addEventListener('click', () => window.setMode('AI_CHASE'));
       document.getElementById('btnManual')?.addEventListener('click', () => window.setMode('MANUAL'));
@@ -1146,10 +1671,30 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('btnSeek')?.addEventListener('click', window.sendTarget);
       document.getElementById('btnViewToggle')?.addEventListener('click', window.toggleView);
 
+      // Expandable System Specs Drawer Toggle
+      document.getElementById('btnSysDetails')?.addEventListener('click', () => {
+        userExpandedSys = !userExpandedSys;
+        const drawer = document.getElementById('sysDetailsDrawer');
+        if (drawer) {
+          drawer.classList.toggle('collapsed', !userExpandedSys);
+        }
+      });
+
+      // Expandable Multimodal Perception Toggle
+      document.getElementById('vlmHeaderToggle')?.addEventListener('click', () => {
+        userExpandedVlm = !userExpandedVlm;
+        const wrapper = document.getElementById('vlmScoresWrapper');
+        if (wrapper) {
+          wrapper.classList.toggle('collapsed', !userExpandedVlm);
+        }
+      });
+
+      // Target Input Enter Key
       document.getElementById('promptInput')?.addEventListener('keydown', e => {
         if (e.key === 'Enter') window.sendTarget();
       });
 
+      // Tactile D-Pad Binding
       const bindBtn = (id, cmd) => {
         const el = document.getElementById(id);
         if (!el) return;
