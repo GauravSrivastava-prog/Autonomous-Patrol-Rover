@@ -1441,7 +1441,7 @@ class RobotController:
         if 0 <= horizon_y < CAMERA_H:
             cv2.rectangle(frame, (0, horizon_y), (CAMERA_W, CAMERA_H), (45, 45, 48), -1)
 
-        # 3D floor quad clipped against camera near-plane
+        # 3D floor quad clipped against camera near-plane (Clean Solid Polished Concrete)
         floor_world = [
             (-ARENA_BOUND, -ARENA_BOUND, 0.0),
             (ARENA_BOUND, -ARENA_BOUND, 0.0),
@@ -1451,25 +1451,6 @@ class RobotController:
         floor_poly = self._project_polygon(floor_world, cam_x, cam_y, cam_z, cam_yaw, cam_pitch, z_near=0.08)
         if floor_poly is not None:
             cv2.fillPoly(frame, [floor_poly], (45, 45, 48))
-
-        # Clean Perspective Floor Grid (Uniform 1px Tiles, Zero Highlighted Axis Lines)
-        grid_step = 0.40
-        num_grid = int(ARENA_BOUND / grid_step)
-        for i in range(-num_grid, num_grid + 1):
-            gx = i * grid_step
-            p1_cam = self._to_cam(gx, -ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            p2_cam = self._to_cam(gx, ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            seg = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=0.08)
-            if seg:
-                cv2.line(frame, seg[0], seg[1], (60, 63, 68), 1)
-
-        for j in range(-num_grid, num_grid + 1):
-            gy = j * grid_step
-            p1_cam = self._to_cam(-ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            p2_cam = self._to_cam(ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            seg = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=0.08)
-            if seg:
-                cv2.line(frame, seg[0], seg[1], (60, 63, 68), 1)
 
         # ── Pass 2: Ground Contact Shadows (Drawn Directly on Floor Before Walls) ──
         for obj in ARENA_OBJECTS.values():
@@ -1649,8 +1630,8 @@ class RobotController:
                 cv2.line(disp_frame, (x2, y2), (x2 - c_len, y2), color, 2)
                 cv2.line(disp_frame, (x2, y2), (x2, y2 - c_len), color, 2)
 
-                # Tactical Label Pill
-                tag = f"🎯 {label.upper()} {int(conf * 100)}%"
+                # Tactical Label Pill (Clean ASCII, Zero Unsupported Emojis / Question Marks)
+                tag = f"{label.upper()} {int(conf * 100)}%"
                 (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
                 tag_y = max(y1 - 6, th + 8)
                 cv2.rectangle(disp_frame, (x1, tag_y - th - 5), (x1 + tw + 10, tag_y + 3), (11, 18, 32), -1)
