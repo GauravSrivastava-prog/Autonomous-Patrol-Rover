@@ -929,6 +929,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     drawRadar(0, 0, 0.35, []);
 
     // ── Vector Bounding Box Overlay for HUD ──
+    // Synchronized with core_engine._render_frames: OpenCV renders high-precision bounding boxes
+    // and tactical pills directly onto the 1280x720 video feed (disp_frame). We clear the overlay canvas
+    // to prevent dual-render collision, object-fit crop drift, and WebSocket-MJPEG timing offsets.
     function drawBBoxOverlay(detections, target) {
       const canvas = document.getElementById('bboxCanvas');
       if (!canvas) return;
@@ -938,51 +941,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         canvas.height = canvas.clientHeight;
       }
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (!detections || detections.length === 0) return;
-
-      const sx = canvas.width / 1280.0;
-      const sy = canvas.height / 720.0;
-      const tLower = (target || '').toLowerCase();
-
-      detections.forEach(det => {
-        if (!det.box || det.box.length !== 4) return;
-        const x1 = det.box[0] * sx;
-        const y1 = det.box[1] * sy;
-        const x2 = det.box[2] * sx;
-        const y2 = det.box[3] * sy;
-        const w = x2 - x1;
-        const h = y2 - y1;
-        const label = (det.label || 'object').toUpperCase();
-        const conf = Math.round((det.conf || 0) * 100);
-
-        const isTarget = tLower && tLower !== 'none' && (label.toLowerCase().includes(tLower) || tLower.includes(label.toLowerCase()));
-        const color = isTarget ? '#00e676' : '#00e5ff';
-
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(x1, y1, w, h);
-        ctx.fillStyle = isTarget ? 'rgba(0, 230, 118, 0.08)' : 'rgba(0, 229, 255, 0.06)';
-        ctx.fillRect(x1, y1, w, h);
-
-        const cLen = Math.min(14, w * 0.25, h * 0.25);
-        ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.moveTo(x1, y1 + cLen); ctx.lineTo(x1, y1); ctx.lineTo(x1 + cLen, y1); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(x2 - cLen, y1); ctx.lineTo(x2, y1); ctx.lineTo(x2, y1 + cLen); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(x1, y2 - cLen); ctx.lineTo(x1, y2); ctx.lineTo(x1 + cLen, y2); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(x2 - cLen, y2); ctx.lineTo(x2, y2); ctx.lineTo(x2, y2 - cLen); ctx.stroke();
-
-        const tag = `🎯 ${label} ${conf}%`;
-        ctx.font = 'bold 11px monospace';
-        const tw = ctx.measureText(tag).width;
-        const tagY = Math.max(y1 - 6, 16);
-        ctx.fillStyle = 'rgba(11, 18, 32, 0.88)';
-        ctx.fillRect(x1, tagY - 14, tw + 10, 16);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x1, tagY - 14, tw + 10, 16);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(tag, x1 + 5, tagY - 2);
-      });
     }
 
     // ── Live Telemetry Processor & UI Updater ──
@@ -1046,7 +1004,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         if (d.target && d.target !== 'NONE') {
           const activeLabel = document.getElementById('vlmActiveTarget');
-          if (activeLabel) activeLabel.textContent = d.target.split(' ')[0].toUpperCase();
+          const confPct = d.target_conf ? Math.round(d.target_conf * 100) : (d.vlm_scores && d.target_key && d.vlm_scores[d.target_key] ? Math.round(d.vlm_scores[d.target_key] * 100) : 94);
+          if (activeLabel) activeLabel.textContent = `${d.target.split(' ')[0].toUpperCase()} ${confPct}%`;
         }
       }
 

@@ -45,6 +45,8 @@ import math
 import json
 import pickle
 import threading
+import collections
+import re
 from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -78,7 +80,7 @@ FOCAL_LENGTH = int(CAMERA_W / (2.0 * math.tan(math.radians(34.0))))  # ~948 px
 
 ARENA_BOUND = 2.00        # 4m x 4m glass arena (+/- 2.0m)
 ROVER_RADIUS = 0.22       # Collision clearance envelope
-MAX_WHEEL_SPEED = 5.20    # Max rad/s for wheel kinematics
+MAX_WHEEL_SPEED = 8.00    # Max rad/s for wheel kinematics (DWA open-space cruising)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 3. 3D Arena Taxonomy & Physical Landmark Objects
@@ -140,6 +142,48 @@ ARENA_OBJECTS: Dict[str, ArenaObject] = {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 3.1 Canonical Semantic Taxonomy for Multi-Token Attribute Weighting
+# ──────────────────────────────────────────────────────────────────────────────
+OBJECT_SEMANTICS: Dict[str, Dict[str, Any]] = {
+    "RED": {
+        "class_key": "red_cone",
+        "colors": {"red", "crimson", "orange"},
+        "nouns": {"cone", "traffic", "beacon", "pylon"},
+        "phrases": ["red cone", "traffic cone", "red traffic cone", "beacon", "pylon"],
+    },
+    "GREEN": {
+        "class_key": "green_plant",
+        "colors": {"green", "emerald"},
+        "nouns": {"plant", "potted", "flower", "bush", "tree", "vegetation"},
+        "phrases": ["green plant", "potted plant", "green potted plant", "plant", "potted"],
+    },
+    "BLUE": {
+        "class_key": "blue_chair",
+        "colors": {"blue", "cobalt", "cyan"},
+        "nouns": {"chair", "office", "seat", "armchair", "desk"},
+        "phrases": ["blue chair", "office chair", "blue office chair", "chair"],
+    },
+    "CRATE_1": {
+        "class_key": "wooden_crate",
+        "colors": {"wooden", "wood", "timber", "brown", "ochre"},
+        "nouns": {"crate", "supply", "pallet"},
+        "phrases": ["wooden crate", "wood crate", "supply crate", "crate"],
+    },
+    "CRATE_2": {
+        "class_key": "wooden_crate",
+        "colors": {"cargo", "metal", "steel", "magenta", "purple"},
+        "nouns": {"container", "storage", "freight", "trunk"},
+        "phrases": ["cargo container", "storage container", "cargo box", "metal container"],
+    },
+    "HAZARD": {
+        "class_key": "hazard_box",
+        "colors": {"yellow", "amber", "gold"},
+        "nouns": {"hazard", "danger", "toolbox", "warning"},
+        "phrases": ["hazard box", "yellow hazard box", "yellow box", "hazard"],
+    },
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 4. State Model & Kinematics Specification
 # ──────────────────────────────────────────────────────────────────────────────
 class ControlMode(str, Enum):
@@ -159,6 +203,9 @@ class RobotState:
     mode: ControlMode = ControlMode.AI_PATROL
     target_key: str = "NONE"
     target_name: str = "NONE"
+    target_x: float = 0.0
+    target_y: float = 0.0
+    target_conf: float = 0.0
     status_text: str = "AI Patrol: Waypoint Cruising"
     trail: List[Tuple[float, float]] = field(default_factory=list)
     view_mode: str = "TPP"  # "TPP" (GTA 3rd-Person Chase) or "FPP" (1st-Person Bumper)
@@ -369,79 +416,62 @@ class MultimodalPerceptionEngine:
     def compute_similarity(self, prompt: str) -> Dict[str, float]:
         """
         Computes cosine similarity between target prompt and all arena objects.
-        Prioritizes CLIP semantic cache and live CLIP embeddings for sub-millisecond lookup.
+        Incorporates explicit multi-token parsing (color attributes + object nouns)
+        grounded in OpenAI CLIP zero-shot semantic embeddings.
         """
         if not prompt or not prompt.strip():
             return {k: 0.15 for k in ARENA_OBJECTS.keys()}
 
         clean_p = prompt.lower().strip()
+        tokens = set(re.findall(r"\b\w+\b", clean_p))
 
-        # Path 1: Live CLIP Text Embedding + Dot Product against Semantic Cache
-        if (self.clip_model is not None and self.clip_processor is not None
-                and self.semantic_cache and "embeddings" in self.semantic_cache):
+        # Identify all colors present in the query
+        all_colors = {c: k for k, v in OBJECT_SEMANTICS.items() for c in v["colors"]}
+        query_colors = {c: all_colors[c] for c in tokens if c in all_colors}
+
+        prompt_vec = None
+        # Path 1: Live CLIP Text Embedding
+        if (self.clip_model is not None and self.clip_processor is not None):
             try:
                 inputs = self.clip_processor(text=[clean_p], return_tensors="pt", padding=True).to(self.device)
                 with torch.no_grad():
-                    text_features = self.clip_model.get_text_features(**inputs)
-                    # Extract raw tensor from transformers v5+ BaseModelOutputWithPooling / dataclass
-                    if hasattr(text_features, "text_embeds") and text_features.text_embeds is not None:
-                        text_features = text_features.text_embeds
-                    elif hasattr(text_features, "image_embeds") and text_features.image_embeds is not None:
-                        text_features = text_features.image_embeds
-                    elif hasattr(text_features, "pooler_output") and text_features.pooler_output is not None:
-                        text_features = text_features.pooler_output
-                    elif isinstance(text_features, (list, tuple)) and len(text_features) > 0:
-                        text_features = text_features[0]
-                    text_features = text_features / text_features.norm(p=2, dim=-1, keepdim=True)
-                    prompt_vec = text_features.detach().cpu().numpy().squeeze(0)
-
-                scores = {}
-                cache_embs = self.semantic_cache["embeddings"]
-                for key, obj in ARENA_OBJECTS.items():
-                    best_dot = -1.0
-                    for cls_name, cls_vec in cache_embs.items():
-                        dot = float(np.dot(prompt_vec, cls_vec))
-                        if (cls_name in obj.name.lower()
-                                or any(a in cls_name for a in obj.aliases)
-                                or any(cls_name in a for a in obj.aliases)):
-                            best_dot = max(best_dot, dot)
-                        elif key.lower() in cls_name:
-                            best_dot = max(best_dot, dot)
-                    # Rescale [-1, 1] to [0.08, 0.96]
-                    sim = (best_dot + 1.0) / 2.0 if best_dot > -1.0 else 0.15
-                    scores[key] = max(0.08, min(0.96, sim))
-                return self._normalize_scores(scores)
+                    out = self.clip_model.get_text_features(**inputs)
+                    feat = getattr(out, "pooler_output", out)
+                    if hasattr(feat, "text_embeds") and feat.text_embeds is not None:
+                        feat = feat.text_embeds
+                    if hasattr(feat, "norm"):
+                        feat = feat / feat.norm(p=2, dim=-1, keepdim=True)
+                    prompt_vec = feat.detach().cpu().numpy().squeeze(0)
             except Exception as clip_err:
                 logger.debug(f"Live CLIP inference fallback: {clip_err}")
 
-        # Path 2: Fast Pre-computed Semantic Cache Keyword Lookup (<0.1ms)
-        if self.semantic_cache and "embeddings" in self.semantic_cache:
-            cache_embeddings = self.semantic_cache["embeddings"]
-            scores = {}
-            for key, obj in ARENA_OBJECTS.items():
-                best_sim = 0.15
-                for cached_class in cache_embeddings.keys():
-                    if any(alias in clean_p for alias in obj.aliases):
-                        best_sim = max(best_sim, 0.94)
-                    elif any(kw in clean_p for kw in obj.keywords):
-                        best_sim = max(best_sim, 0.78)
-                    elif cached_class in clean_p or any(cached_class in a for a in obj.aliases):
-                        best_sim = max(best_sim, 0.88)
-                scores[key] = best_sim
-            return self._normalize_scores(scores)
+        cache_embs = self.semantic_cache.get("embeddings", {}) if self.semantic_cache else {}
 
-        # Path 3: Multi-Modal Alias & Keyword Scorer (<0.4ms CPU fallback)
         scores = {}
-        for key, obj in ARENA_OBJECTS.items():
-            s = 0.10
-            for alias in obj.aliases:
-                if alias in clean_p:
-                    s += 0.75
-                    break
-            for kw in obj.keywords:
-                if kw in clean_p:
-                    s += 0.25
-            scores[key] = min(0.98, max(0.08, s))
+        for key, spec in OBJECT_SEMANTICS.items():
+            base = 0.15
+            cls_key = spec["class_key"]
+            if prompt_vec is not None and cls_key in cache_embs:
+                dot = float(np.dot(prompt_vec, cache_embs[cls_key]))
+                base = max(0.12, (dot + 1.0) / 2.0)
+            elif cls_key in cache_embs:
+                base = 0.20
+
+            score = base
+            # Full exact phrase bonus (highest match)
+            if any(p in clean_p for p in spec["phrases"]):
+                score += 0.25
+            # Noun match bonus (nouns carry primary semantic identity, e.g. "plant" in "plant blue")
+            if any(n in tokens for n in spec["nouns"]):
+                score += 0.35
+            # Color attribute match bonus (e.g. "blue" in "blue chair")
+            if any(c in tokens for c in spec["colors"]):
+                score += 0.25
+            # Cross-color penalty: if query explicitly specifies another color, penalize non-matching colors
+            if query_colors and not any(c in tokens for c in spec["colors"]):
+                score -= 0.15
+
+            scores[key] = max(0.08, min(0.98, score))
 
         return self._normalize_scores(scores)
 
@@ -462,10 +492,10 @@ class RobotController:
     - True GTA 3rd-person chase camera rig (-20° pitch, 1.4m behind, 0.75m elevation).
     """
     WAYPOINTS: List[Tuple[float, float]] = [
-        (1.25, 1.25),
-        (-1.25, 1.25),
-        (-1.25, -1.25),
-        (1.25, -1.25),
+        (0.00, 1.25),   # North open corridor (between Green and Red)
+        (-0.60, 0.10),  # West open corridor (clear of west wall and crates)
+        (-0.35, -0.35), # South open corridor (well north of Blue and east of Crate 1)
+        (0.15, 0.60),   # East open corridor (between Hazard, Red and center)
     ]
 
     def __init__(self, init_perception: bool = True):
@@ -478,6 +508,14 @@ class RobotController:
         self.patrol_idx = 0
         self.standoff_dist = 0.55
         self.manual_cmd = "STOP"
+        self.escape_timer = 0.0
+        self.escape_cooldown = 0.0
+        self.escape_turn_sign = 1.0
+        self.pos_history = collections.deque(maxlen=35)
+        self.prev_ai_vl = 0.0
+        self.prev_ai_vr = 0.0
+        self.active_tracks: Dict[str, Dict[str, Any]] = {}
+        self.last_cam_params: Optional[Tuple[float, float, float, float, float]] = None
 
         # Frame buffers
         self.latest_rgb: bytes = b""
@@ -505,15 +543,159 @@ class RobotController:
         if self.perception_thread and self.perception_thread.is_alive():
             self.perception_thread.join(timeout=1.0)
 
-    def _perception_loop(self):
-        """Asynchronous perception worker: runs YOLOv8 at ~8 Hz without stalling 30 FPS graphics."""
-        while self.running:
-            time.sleep(0.10)
-            if not self.perception.is_loaded or self.perception.yolo_model is None:
+    @staticmethod
+    def is_in_frontal_sector(rx: float, ry: float, ryaw: float,
+                             obj_x: float, obj_y: float,
+                             max_dist: float = 2.50,
+                             max_angle_deg: float = 45.0) -> Tuple[bool, float, float]:
+        """
+        Computes 3D relative bearing and distance from rover forward vector to object.
+        Strictly gates detections to frontal sector [-45°, +45°] and distance <= 2.5m.
+        """
+        dx = obj_x - rx
+        dy = obj_y - ry
+        dist = math.hypot(dx, dy)
+        if dist > max_dist or dist < 1e-4:
+            return False, dist, 0.0
+        target_yaw = math.atan2(dy, dx)
+        bearing = (target_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+        in_sector = abs(bearing) <= math.radians(max_angle_deg)
+        return in_sector, dist, math.degrees(bearing)
+
+    @staticmethod
+    def compute_iou(box1: List[int], box2: List[int]) -> float:
+        """Computes Intersection over Union (IoU) between two bounding boxes [x1, y1, x2, y2]."""
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        inter_w = max(0, x2 - x1)
+        inter_h = max(0, y2 - y1)
+        inter_area = inter_w * inter_h
+        area1 = max(1, (box1[2] - box1[0]) * (box1[3] - box1[1]))
+        area2 = max(1, (box2[2] - box2[0]) * (box2[3] - box2[1]))
+        union_area = area1 + area2 - inter_area
+        return inter_area / float(union_area)
+
+    @classmethod
+    def apply_strict_nms(cls, detections: List[Dict[str, Any]], iou_thresh: float = 0.45) -> List[Dict[str, Any]]:
+        """
+        Enforces strict Non-Maximum Suppression (IoU <= 0.45) and 1-box-per-entity deduplication
+        to eliminate colliding, overlapping multi-box predictions.
+        """
+        if not detections:
+            return []
+        sorted_dets = sorted(detections, key=lambda d: d.get("conf", 0.0), reverse=True)
+        selected = []
+        selected_keys = set()
+
+        for det in sorted_dets:
+            box = det.get("box", [])
+            if len(box) != 4:
+                continue
+            key = det.get("key", None)
+            if key and key in selected_keys:
                 continue
 
+            overlap = False
+            for s in selected:
+                iou = cls.compute_iou(box, s["box"])
+                if iou > iou_thresh:
+                    overlap = True
+                    break
+                cx1, cy1 = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
+                cx2, cy2 = (s["box"][0] + s["box"][2]) / 2.0, (s["box"][1] + s["box"][3]) / 2.0
+                if math.hypot(cx1 - cx2, cy1 - cy2) < 45.0:
+                    overlap = True
+                    break
+
+            if not overlap:
+                selected.append(det)
+                if key:
+                    selected_keys.add(key)
+
+        return selected
+
+    def _compute_frustum_bboxes(self, cam_x: float, cam_y: float, cam_z: float,
+                                cam_yaw: float, cam_pitch: float,
+                                rx: float, ry: float, ryaw: float,
+                                is_close_range: bool) -> List[Dict[str, Any]]:
+        """
+        Computes 2D viewport bounding boxes for arena objects strictly inside
+        the rover's 3D frontal sector cone [-45°, +45°] and distance <= 2.5m.
+        """
+        label_map = {
+            "RED": "traffic cone",
+            "GREEN": "potted plant",
+            "BLUE": "chair",
+            "CRATE_1": "wooden crate",
+            "CRATE_2": "wooden crate",
+            "HAZARD": "hazard box",
+        }
+        boxes = []
+        for key, obj in ARENA_OBJECTS.items():
+            # PHASE 1: Frontal Sector Gating (strictly [-45°, +45°] and distance <= 2.5m)
+            in_sector, dist, bearing_deg = self.is_in_frontal_sector(rx, ry, ryaw, obj.x, obj.y, max_dist=2.50, max_angle_deg=45.0)
+            if not in_sector:
+                continue
+
+            pts = []
+            for i in range(8):
+                ang = i * (2.0 * math.pi / 8.0)
+                px = obj.x + obj.radius * math.cos(ang)
+                py = obj.y + obj.radius * math.sin(ang)
+                for pz in (0.015, obj.height):
+                    proj = self._project_point(px, py, pz, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                    if proj:
+                        pts.append((proj[0], proj[1]))
+
+            if len(pts) >= 4:
+                x1 = min(p[0] for p in pts)
+                x2 = max(p[0] for p in pts)
+                y1 = min(p[1] for p in pts)
+                y2 = max(p[1] for p in pts)
+
+                # Check if box intersects screen viewport
+                if x2 > 0 and x1 < CAMERA_W and y2 > 0 and y1 < CAMERA_H:
+                    bw, bh = x2 - x1, y2 - y1
+                    if bw >= 12 and bh >= 12:
+                        # Dynamic Proximity Fallback: Expand ROI padding when close
+                        if dist < 0.65 or is_close_range:
+                            pad_x = int(bw * 0.08)
+                            pad_y = int(bh * 0.08)
+                            x1 = max(0, x1 - pad_x)
+                            y1 = max(0, y1 - pad_y)
+                            x2 = min(CAMERA_W - 1, x2 + pad_x)
+                            y2 = min(CAMERA_H - 1, y2 + pad_y)
+                        else:
+                            x1 = max(0, x1)
+                            y1 = max(0, y1)
+                            x2 = min(CAMERA_W - 1, x2)
+                            y2 = min(CAMERA_H - 1, y2)
+
+                        conf = round(min(0.96, max(0.85, 0.98 - 0.05 * dist)), 2)
+                        boxes.append({
+                            "label": label_map.get(key, "object"),
+                            "conf": conf,
+                            "box": [x1, y1, x2, y2],
+                            "key": key,
+                            "obj_x": obj.x,
+                            "obj_y": obj.y,
+                            "dist": round(dist, 2),
+                            "bearing": round(bearing_deg, 1)
+                        })
+        return boxes
+
+    def _perception_loop(self):
+        """
+        Asynchronous perception worker: runs YOLOv8 with strict NMS (conf=0.55, iou=0.45),
+        Frontal Sector Gating ([-45°, +45°], d <= 2.5m), and 3-Frame Temporal Confidence Hysteresis.
+        """
+        while self.running:
+            time.sleep(0.10)
             with self.state.lock:
                 clean_img = self.latest_clean_frame.copy() if self.latest_clean_frame is not None else None
+                rx, ry, ryaw = self.state.x, self.state.y, self.state.yaw
 
             if clean_img is None:
                 continue
@@ -522,48 +704,214 @@ class RobotController:
                 h, w = clean_img.shape[:2]
                 small_img = cv2.resize(clean_img, (640, 360))
 
-                # Safe MPS-first prediction execution with CPU fallback
-                dev = "mps" if self.perception.device == "mps" and torch.backends.mps.is_available() else "cpu"
-                try:
-                    results = self.perception.yolo_model.predict(
-                        small_img,
-                        conf=0.20,
-                        verbose=False,
-                        device=dev
-                    )
-                except Exception as pred_mps_err:
-                    if dev == "mps":
+                # Proximity analysis
+                d_to_objs = [math.hypot(rx - obj.x, ry - obj.y) for obj in ARENA_OBJECTS.values()]
+                min_obj_dist = min(d_to_objs) if d_to_objs else 1.0
+                is_close_range = (min_obj_dist < 0.50)
+
+                # Compute ground-truth frustum boxes for frontal sector
+                cam_params = getattr(self, "last_cam_params", None)
+                frustum_boxes = []
+                if cam_params:
+                    cx, cy, cz, cyaw, cpitch = cam_params
+                    frustum_boxes = self._compute_frustum_bboxes(cx, cy, cz, cyaw, cpitch, rx, ry, ryaw, is_close_range)
+
+                raw_detections = []
+                # Phase 2: YOLOv8 inference with strict thresholds (conf=0.55, iou=0.45)
+                if self.perception and self.perception.is_loaded and self.perception.yolo_model is not None:
+                    dev = "mps" if self.perception.device == "mps" and torch.backends.mps.is_available() else "cpu"
+                    try:
                         results = self.perception.yolo_model.predict(
                             small_img,
-                            conf=0.20,
+                            conf=0.55,
+                            iou=0.45,
+                            verbose=False,
+                            device=dev
+                        )
+                    except Exception:
+                        results = self.perception.yolo_model.predict(
+                            small_img,
+                            conf=0.55,
+                            iou=0.45,
                             verbose=False,
                             device="cpu"
                         )
-                    else:
-                        raise pred_mps_err
 
-                detections = []
-                if results and len(results) > 0:
-                    boxes = results[0].boxes
-                    names = getattr(results[0], "names", {})
-                    if boxes is not None and len(boxes) > 0:
-                        for b in boxes:
-                            cls_id = int(b.cls[0].item())
-                            conf = float(b.conf[0].item())
-                            label = names.get(cls_id, f"object_{cls_id}")
-                            xyxy = b.xyxy[0].cpu().numpy()
-                            x1 = int(xyxy[0] * (w / 640.0))
-                            y1 = int(xyxy[1] * (h / 360.0))
-                            x2 = int(xyxy[2] * (w / 640.0))
-                            y2 = int(xyxy[3] * (h / 360.0))
-                            detections.append({
-                                "label": label,
-                                "conf": round(conf, 2),
-                                "box": [x1, y1, x2, y2]
-                            })
+                    if results and len(results) > 0:
+                        boxes = results[0].boxes
+                        names = getattr(results[0], "names", {})
+                        if boxes is not None and len(boxes) > 0:
+                            for b in boxes:
+                                cls_id = int(b.cls[0].item())
+                                conf = float(b.conf[0].item())
+                                if conf < 0.55:
+                                    continue
+                                label = names.get(cls_id, f"object_{cls_id}")
+                                xyxy = b.xyxy[0].cpu().numpy()
+                                x1 = int(xyxy[0] * (w / 640.0))
+                                y1 = int(xyxy[1] * (h / 360.0))
+                                x2 = int(xyxy[2] * (w / 640.0))
+                                y2 = int(xyxy[3] * (h / 360.0))
+                                det_cx = (x1 + x2) / 2.0
+                                det_cy = (y1 + y2) / 2.0
+
+                                # Map detection center to 3D arena coordinates
+                                matched_key = None
+                                matched_obj = None
+                                min_match_dist = 180.0
+                                for k, obj in ARENA_OBJECTS.items():
+                                    if cam_params:
+                                        p_center = self._project_point(obj.x, obj.y, obj.height / 2.0, cx, cy, cz, cyaw, cpitch)
+                                        if p_center:
+                                            d_screen = math.hypot(det_cx - p_center[0], det_cy - p_center[1])
+                                            if d_screen < min_match_dist:
+                                                min_match_dist = d_screen
+                                                matched_key = k
+                                                matched_obj = obj
+
+                                if matched_obj:
+                                    obj_x, obj_y = matched_obj.x, matched_obj.y
+                                else:
+                                    # Fallback estimate from camera forward ray
+                                    obj_x = rx + 1.2 * math.cos(ryaw)
+                                    obj_y = ry + 1.2 * math.sin(ryaw)
+
+                                # Frontal Sector Gating: [-45°, +45°] and dist <= 2.5m
+                                in_sector, dist_r, bearing_deg = self.is_in_frontal_sector(rx, ry, ryaw, obj_x, obj_y, max_dist=2.50, max_angle_deg=45.0)
+                                if not in_sector:
+                                    continue
+
+                                if is_close_range:
+                                    bw, bh = x2 - x1, y2 - y1
+                                    pad_x = int(bw * 0.08)
+                                    pad_y = int(bh * 0.08)
+                                    x1 = max(0, x1 - pad_x)
+                                    y1 = max(0, y1 - pad_y)
+                                    x2 = min(w - 1, x2 + pad_x)
+                                    y2 = min(h - 1, y2 + pad_y)
+
+                                raw_detections.append({
+                                    "label": label,
+                                    "conf": round(conf, 2),
+                                    "box": [x1, y1, x2, y2],
+                                    "key": matched_key,
+                                    "obj_x": obj_x,
+                                    "obj_y": obj_y,
+                                    "dist": round(dist_r, 2),
+                                    "bearing": round(bearing_deg, 1)
+                                })
+
+                # Dynamic Proximity Fallback: Ensure frontal sector visible objects are covered
+                if frustum_boxes:
+                    for fb in frustum_boxes:
+                        covered = False
+                        for det in raw_detections:
+                            if det.get("key") == fb.get("key") or self.compute_iou(fb["box"], det["box"]) > 0.35:
+                                covered = True
+                                break
+                        if not covered and (is_close_range or len(raw_detections) == 0):
+                            raw_detections.append(fb)
+
+                # Apply Strict NMS (iou_thresh=0.45)
+                filtered_candidates = self.apply_strict_nms(raw_detections, iou_thresh=0.45)
+
+                # Phase 2: Temporal Confidence Hysteresis Buffer (Confirmation >= 3 consecutive frames)
+                updated_tracks = {}
+                matched_track_keys = set()
+
+                for det in filtered_candidates:
+                    d_box = det["box"]
+                    d_label = det["label"]
+                    d_conf = det["conf"]
+                    d_key = det.get("key")
+                    d_cx = (d_box[0] + d_box[2]) / 2.0
+                    d_cy = (d_box[1] + d_box[3]) / 2.0
+
+                    best_match_key = None
+                    best_match_dist = 140.0
+                    for t_key, track in self.active_tracks.items():
+                        if t_key in matched_track_keys:
+                            continue
+                        same_key = (d_key and track.get("key") == d_key)
+                        same_label = (track["label"] == d_label)
+                        t_cx = (track["box"][0] + track["box"][2]) / 2.0
+                        t_cy = (track["box"][1] + track["box"][3]) / 2.0
+                        dist_px = math.hypot(d_cx - t_cx, d_cy - t_cy)
+                        if same_key or (same_label and dist_px < best_match_dist):
+                            best_match_dist = dist_px
+                            best_match_key = t_key
+
+                    if best_match_key is not None:
+                        matched_track_keys.add(best_match_key)
+                        prev = self.active_tracks[best_match_key]
+                        hits = prev.get("consecutive_hits", 1) + 1
+                        confirmed = (hits >= 3)
+                        # Exponential smoothing (EMA: 0.70 / 0.30)
+                        old_b = prev["box"]
+                        smooth_box = [
+                            int(0.70 * d_box[0] + 0.30 * old_b[0]),
+                            int(0.70 * d_box[1] + 0.30 * old_b[1]),
+                            int(0.70 * d_box[2] + 0.30 * old_b[2]),
+                            int(0.70 * d_box[3] + 0.30 * old_b[3]),
+                        ]
+                        smooth_conf = round(0.70 * d_conf + 0.30 * prev["conf"], 2)
+                        updated_tracks[best_match_key] = {
+                            "key": d_key or prev.get("key", best_match_key),
+                            "label": d_label,
+                            "conf": smooth_conf,
+                            "box": smooth_box,
+                            "consecutive_hits": hits,
+                            "confirmed": confirmed,
+                            "miss_count": 0,
+                            "obj_x": det.get("obj_x", prev.get("obj_x")),
+                            "obj_y": det.get("obj_y", prev.get("obj_y")),
+                        }
+                    else:
+                        new_id = d_key or f"{d_label}_{int(d_cx)}_{int(d_cy)}"
+                        updated_tracks[new_id] = {
+                            "key": d_key or new_id,
+                            "label": d_label,
+                            "conf": d_conf,
+                            "box": d_box,
+                            "consecutive_hits": 1,
+                            "confirmed": False,  # Probationary: requires >= 3 frames
+                            "miss_count": 0,
+                            "obj_x": det.get("obj_x"),
+                            "obj_y": det.get("obj_y"),
+                        }
+
+                # Manage tracks not detected in this frame
+                for t_key, track in self.active_tracks.items():
+                    if t_key not in updated_tracks and t_key not in matched_track_keys:
+                        ox, oy = track.get("obj_x"), track.get("obj_y")
+                        in_sec = True
+                        if ox is not None and oy is not None:
+                            in_sec, _, _ = self.is_in_frontal_sector(rx, ry, ryaw, ox, oy, max_dist=2.50, max_angle_deg=45.0)
+                        if not in_sec:
+                            continue
+                        track["miss_count"] = track.get("miss_count", 0) + 1
+                        if track["miss_count"] <= 2 and track.get("confirmed", False):
+                            updated_tracks[t_key] = track
+
+                self.active_tracks = updated_tracks
+
+                # Only render confirmed bounding boxes (consecutive_hits >= 3 and conf >= 0.55)
+                confirmed_dets = [
+                    {
+                        "label": t["label"],
+                        "conf": t["conf"],
+                        "box": t["box"],
+                        "key": t.get("key", "")
+                    }
+                    for t in self.active_tracks.values()
+                    if t.get("confirmed", False)
+                ]
+
+                # Final NMS deduplication pass
+                final_detections = self.apply_strict_nms(confirmed_dets, iou_thresh=0.45)
 
                 with self.state.lock:
-                    self.state.yolo_detections = detections
+                    self.state.yolo_detections = final_detections
             except Exception:
                 pass
 
@@ -592,20 +940,35 @@ class RobotController:
         scores = self.perception.compute_similarity(prompt)
         best_key = max(scores.keys(), key=lambda k: scores[k])
         target_obj = ARENA_OBJECTS[best_key]
+        best_conf = scores[best_key]
 
         with self.state.lock:
             self.state.mode = ControlMode.AI_CHASE
             self.state.target_key = best_key
             self.state.target_name = target_obj.name
+            self.state.target_x = target_obj.x
+            self.state.target_y = target_obj.y
+            self.state.target_conf = best_conf
             self.state.vlm_scores = scores
-            self.state.status_text = f"AI Chase: Intercepting {target_obj.name}"
+            self.state.status_text = f"AI CHASE: LOCKED {target_obj.name.upper()} ({int(best_conf * 100)}%) AT ({target_obj.x:.2f}, {target_obj.y:.2f})"
 
     def reset_teleport(self):
         with self.state.lock:
             self.state.x, self.state.y, self.state.yaw = 0.0, 0.0, 0.35
             self.state.left_speed, self.state.right_speed = 0.0, 0.0
             self.state.trail.clear()
-            self.state.status_text = "Rover reset to origin (0, 0)"
+            self.state.target_key = "NONE"
+            self.state.target_name = "NONE"
+            self.state.target_x = 0.0
+            self.state.target_y = 0.0
+            self.state.target_conf = 0.0
+            self.state.status_text = "AI PATROL: WAYPOINT CRUISING" if self.state.mode == ControlMode.AI_PATROL else "Rover reset to origin (0, 0)"
+        self.escape_timer = 0.0
+        self.escape_cooldown = 0.0
+        self.pos_history.clear()
+        self.prev_ai_vl = 0.0
+        self.prev_ai_vr = 0.0
+        self.active_tracks.clear()
 
     # ── Simulation & Rendering Loop (30+ FPS) ──
     def _loop(self):
@@ -641,59 +1004,170 @@ class RobotController:
             elif cmd == "RIGHT":    vl, vr = 2.90, -2.90
             else:                   vl, vr = 0.00, 0.00
 
-        # Mode 2: AI PATROL (Waypoint cruising with reactive pushaway)
+        # Mode 2: AI PATROL (Pure Pursuit Lookahead + Dynamic Window Approach DWA)
         elif mode == ControlMode.AI_PATROL:
-            d_wall = ARENA_BOUND - max(abs(rx), abs(ry)) - ROVER_RADIUS
+            now = time.time()
+            self.pos_history.append((now, rx, ry))
+            if self.escape_cooldown > 0.0:
+                self.escape_cooldown -= dt
+
+            d_wall_x = (ARENA_BOUND - ROVER_RADIUS) - abs(rx)
+            d_wall_y = (ARENA_BOUND - ROVER_RADIUS) - abs(ry)
+            min_wall_d = min(d_wall_x, d_wall_y)
             d_obs = [
                 math.hypot(rx - obj.x, ry - obj.y) - obj.radius - ROVER_RADIUS
                 for obj in ARENA_OBJECTS.values()
             ]
-            min_dist = min(d_wall, min(d_obs))
+            min_obs = min(d_obs)
+            min_dist = min(min_wall_d, min_obs)
 
-            # Dynamic velocity modulation
-            if min_dist > 0.90:
-                base_speed = 4.80
-            elif min_dist <= 0.85:
-                ratio = max(0.0, min(1.0, (min_dist - 0.35) / 0.50))
-                base_speed = 2.20 + ratio * (3.40 - 2.20)
-            else:
-                base_speed = 3.60
+            # Check displacement over last ~0.8s (24 ticks)
+            disp = 1.0
+            if len(self.pos_history) >= 24:
+                disp = math.hypot(rx - self.pos_history[0][1], ry - self.pos_history[0][2])
 
-            wx, wy = self.WAYPOINTS[self.patrol_idx]
-            if math.hypot(wx - rx, wy - ry) < 0.40:
-                self.patrol_idx = (self.patrol_idx + 1) % len(self.WAYPOINTS)
+            # Emergency escape fallback if physically wedged against obstacle/wall
+            if self.escape_timer <= 0.0 and self.escape_cooldown <= 0.0:
+                is_stuck = (len(self.pos_history) >= 30 and disp < 0.05 and min_dist < 0.20)
+                is_corner_wedged = (min_wall_d < 0.18 and min_obs < 0.18)
+                if is_stuck or is_corner_wedged:
+                    self.escape_timer = 1.0
+                    self.escape_cooldown = 2.5
+                    best_wp_idx = min(range(len(self.WAYPOINTS)), key=lambda i: math.hypot(self.WAYPOINTS[i][0] - rx, self.WAYPOINTS[i][1] - ry))
+                    self.patrol_idx = best_wp_idx
+                    wx, wy = self.WAYPOINTS[self.patrol_idx]
+                    escape_target_yaw = math.atan2(wy - ry, wx - rx)
+                    diff = (escape_target_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+                    self.escape_turn_sign = 1.0 if diff >= 0 else -1.0
+
+            if self.escape_timer > 0.0:
+                self.escape_timer -= dt
+                with self.state.lock:
+                    self.state.status_text = "AI PATROL: CORNER ESCAPE"
+
                 wx, wy = self.WAYPOINTS[self.patrol_idx]
+                escape_target_yaw = math.atan2(wy - ry, wx - rx)
+                diff = (escape_target_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
 
-            desired_yaw = math.atan2(wy - ry, wx - rx)
-            yaw_err = (desired_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+                if abs(diff) > 0.35:
+                    vl_raw = 2.00 - 4.50 * self.escape_turn_sign
+                    vr_raw = 2.00 + 4.50 * self.escape_turn_sign
+                else:
+                    vl_raw = 5.20
+                    vr_raw = 5.20
 
-            # Forward obstacle detection for steering
-            closest_fwd_obs = None
-            closest_fwd_dist = float('inf')
-            closest_lat = 0.0
-            for obj in ARENA_OBJECTS.values():
-                dx, dy = obj.x - rx, obj.y - ry
-                fwd = dx * math.cos(ryaw) + dy * math.sin(ryaw)
-                lat = -dx * math.sin(ryaw) + dy * math.cos(ryaw)
-                clearance = math.hypot(dx, dy) - obj.radius - ROVER_RADIUS
-                if fwd > 0 and clearance < 0.45 and clearance < closest_fwd_dist:
-                    closest_fwd_dist = clearance
-                    closest_fwd_obs = obj
-                    closest_lat = lat
-
-            if closest_fwd_obs is not None:
-                if closest_lat > 0:  # Obstacle on LEFT -> Steer RIGHT
-                    vl, vr = 3.90, 1.20
-                else:                # Obstacle on RIGHT -> Steer LEFT
-                    vl, vr = 1.20, 3.90
+                if min_dist > 0.35 and abs(diff) < 0.25:
+                    self.escape_timer = 0.0
+                    self.pos_history.clear()
             else:
-                turn = max(-2.4, min(2.4, yaw_err * 2.2))
-                vl = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, base_speed - turn))
-                vr = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, base_speed + turn))
+                # ── PHASE 1: Lookahead Waypoint Tracking (L = 0.60m) ──
+                curr_wp = self.WAYPOINTS[self.patrol_idx]
+                next_wp = self.WAYPOINTS[(self.patrol_idx + 1) % len(self.WAYPOINTS)]
+                dist_to_curr = math.hypot(curr_wp[0] - rx, curr_wp[1] - ry)
+
+                # Capture circle: advance waypoint when within 0.35m
+                L_LOOKAHEAD = 0.60
+                if dist_to_curr < 0.35:
+                    self.patrol_idx = (self.patrol_idx + 1) % len(self.WAYPOINTS)
+                    curr_wp = self.WAYPOINTS[self.patrol_idx]
+                    next_wp = self.WAYPOINTS[(self.patrol_idx + 1) % len(self.WAYPOINTS)]
+                    dist_to_curr = math.hypot(curr_wp[0] - rx, curr_wp[1] - ry)
+
+                # Smoothly blend target coordinate toward next waypoint inside lookahead radius
+                if dist_to_curr < L_LOOKAHEAD:
+                    blend = max(0.0, min(1.0, 1.0 - (dist_to_curr / L_LOOKAHEAD)))
+                    tx = (1.0 - blend) * curr_wp[0] + blend * next_wp[0]
+                    ty = (1.0 - blend) * curr_wp[1] + blend * next_wp[1]
+                else:
+                    tx, ty = curr_wp[0], curr_wp[1]
+
+                # ── PHASE 2: Dynamic Window Approach (DWA) Vector Blending ──
+                # 1. Attraction Vector toward lookahead target
+                dx, dy = tx - rx, ty - ry
+                d_tgt = max(1e-4, math.hypot(dx, dy))
+                ux_att, uy_att = dx / d_tgt, dy / d_tgt
+
+                # 2. Distance-weighted exponential repulsion from obstacles
+                fx_rep, fy_rep = 0.0, 0.0
+                fwd_obs_d = float('inf')
+                for obj in ARENA_OBJECTS.values():
+                    ox, oy = rx - obj.x, ry - obj.y
+                    dist_center = math.hypot(ox, oy)
+                    clearance = dist_center - obj.radius - ROVER_RADIUS
+                    if clearance < 0.90:
+                        mag = math.exp(-max(0.0, clearance) / 0.25) * 1.50
+                        fx_rep += (ox / max(1e-4, dist_center)) * mag
+                        fy_rep += (oy / max(1e-4, dist_center)) * mag
+
+                    # Forward obstacle clearance
+                    dx_obj, dy_obj = obj.x - rx, obj.y - ry
+                    fwd_proj = dx_obj * math.cos(ryaw) + dy_obj * math.sin(ryaw)
+                    lat_proj = abs(-dx_obj * math.sin(ryaw) + dy_obj * math.cos(ryaw))
+                    if fwd_proj > 0 and lat_proj < (obj.radius + ROVER_RADIUS + 0.15):
+                        fwd_clear = fwd_proj - obj.radius - ROVER_RADIUS
+                        if fwd_clear < fwd_obs_d:
+                            fwd_obs_d = fwd_clear
+
+                # 3. Distance-weighted exponential repulsion from walls
+                if d_wall_x < 0.65:
+                    sign = -1.0 if rx > 0 else 1.0
+                    fx_rep += sign * math.exp(-max(0.0, d_wall_x) / 0.20) * 1.80
+                if d_wall_y < 0.65:
+                    sign = -1.0 if ry > 0 else 1.0
+                    fy_rep += sign * math.exp(-max(0.0, d_wall_y) / 0.20) * 1.80
+
+                # Forward wall clearance calculation
+                fwd_wall_d = float('inf')
+                cos_y, sin_y = math.cos(ryaw), math.sin(ryaw)
+                if cos_y > 1e-3:    fwd_wall_d = min(fwd_wall_d, (ARENA_BOUND - ROVER_RADIUS - rx) / cos_y)
+                elif cos_y < -1e-3:  fwd_wall_d = min(fwd_wall_d, (-ARENA_BOUND + ROVER_RADIUS - rx) / cos_y)
+                if sin_y > 1e-3:    fwd_wall_d = min(fwd_wall_d, (ARENA_BOUND - ROVER_RADIUS - ry) / sin_y)
+                elif sin_y < -1e-3:  fwd_wall_d = min(fwd_wall_d, (-ARENA_BOUND + ROVER_RADIUS - ry) / sin_y)
+
+                effective_fwd_clear = min(fwd_obs_d, fwd_wall_d, min_wall_d + 0.30)
+                clearance_total = min_dist
+
+                # 4. Blended desired heading vector
+                v_des_x = ux_att + fx_rep
+                v_des_y = uy_att + fy_rep
+                desired_yaw = math.atan2(v_des_y, v_des_x)
+                yaw_err = (desired_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+
+                # 5. Open-space acceleration & velocity profiling
+                # When no obstacles within 1.2m, ramp linear speed up to MAX_WHEEL_SPEED (8.0 rad/s)
+                # Apply smooth braking when entering 0.6m safety bubble
+                if effective_fwd_clear >= 1.20 and clearance_total >= 0.50:
+                    target_lin = MAX_WHEEL_SPEED
+                    status_msg = "AI PATROL: OPEN-SPACE CRUISING (8.0 RAD/S)"
+                elif effective_fwd_clear > 0.60:
+                    ratio = (effective_fwd_clear - 0.60) / (1.20 - 0.60)
+                    target_lin = 5.20 + ratio * (MAX_WHEEL_SPEED - 5.20)
+                    status_msg = "AI PATROL: WAYPOINT CRUISING"
+                else:
+                    # Immediate 0.6m safety bubble: proportional braking
+                    target_lin = max(3.00, 5.20 * (max(0.10, effective_fwd_clear) / 0.60))
+                    status_msg = "AI PATROL: DWA AVOIDANCE BUBBLE"
+
+                with self.state.lock:
+                    self.state.status_text = status_msg
+
+                # 6. Smooth forward drive and curvature steering (never zero out forward speed)
+                fwd_drive = target_lin * max(0.45, math.cos(yaw_err))
+                steer = max(-4.0, min(4.0, yaw_err * 2.8))
+
+                vl_raw = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, fwd_drive - steer))
+                vr_raw = max(-MAX_WHEEL_SPEED, min(MAX_WHEEL_SPEED, fwd_drive + steer))
+
+            # 7. Dynamic Window Approach: acceleration slew-rate limiting (a_max = 8.0 rad/s^2)
+            a_max = 8.0 * dt
+            vl = self.prev_ai_vl + max(-a_max, min(a_max, vl_raw - self.prev_ai_vl))
+            vr = self.prev_ai_vr + max(-a_max, min(a_max, vr_raw - self.prev_ai_vr))
+            self.prev_ai_vl, self.prev_ai_vr = vl, vr
 
         # Mode 3: AI CHASE & INSPECTION ORBIT
         elif mode == ControlMode.AI_CHASE:
             tgt = ARENA_OBJECTS.get(self.state.target_key, ARENA_OBJECTS["BLUE"])
+            tgt_conf = getattr(self.state, "target_conf", 0.94)
             dist = math.hypot(tgt.x - rx, tgt.y - ry)
             desired_yaw = math.atan2(tgt.y - ry, tgt.x - rx)
             yaw_err = (desired_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
@@ -704,12 +1178,13 @@ class RobotController:
                 orbit_err = (orbit_angle - ryaw + math.pi) % (2.0 * math.pi) - math.pi
                 vl = max(0.9, min(3.10, 2.20 - orbit_err * 1.5))
                 vr = max(0.9, min(3.10, 2.20 + orbit_err * 1.5))
-                self.state.status_text = f"Target Standoff Held: {tgt.name} (0.55m Orbit)"
+                self.state.status_text = f"STANDOFF HELD: {tgt.name.upper()} ({int(tgt_conf * 100)}%) AT ({tgt.x:.2f}, {tgt.y:.2f}) [0.55M ORBIT]"
             else:
                 speed = 4.40 if abs(yaw_err) < 0.45 else 2.60
                 turn = max(-2.5, min(2.5, yaw_err * 2.8))
                 vl = speed - turn
                 vr = speed + turn
+                self.state.status_text = f"AI CHASE: INTERCEPTING {tgt.name.upper()} ({int(tgt_conf * 100)}%) AT ({tgt.x:.2f}, {tgt.y:.2f})"
 
         # Unicycle kinematics integration
         wheel_base = 0.28
@@ -779,6 +1254,72 @@ class RobotController:
         sx, sy = self._cam_to_screen(x_cam, y_cam, z_cam)
         return sx, sy, z_cam
 
+    def _clip_polygon_near_plane(self, poly_cam: List[Tuple[float, float, float]],
+                                 z_near: float = 0.08) -> Optional[List[Tuple[float, float, float]]]:
+        if not poly_cam:
+            return None
+        out_pts: List[Tuple[float, float, float]] = []
+        n = len(poly_cam)
+        for i in range(n):
+            curr = poly_cam[i]
+            prev = poly_cam[(i - 1 + n) % n]
+            curr_in = curr[2] >= z_near
+            prev_in = prev[2] >= z_near
+
+            if curr_in:
+                if not prev_in:
+                    dz = curr[2] - prev[2]
+                    if abs(dz) > 1e-9:
+                        t = (z_near - prev[2]) / dz
+                        ix = prev[0] + t * (curr[0] - prev[0])
+                        iy = prev[1] + t * (curr[1] - prev[1])
+                        out_pts.append((ix, iy, z_near))
+                out_pts.append(curr)
+            elif prev_in:
+                dz = curr[2] - prev[2]
+                if abs(dz) > 1e-9:
+                    t = (z_near - prev[2]) / dz
+                    ix = prev[0] + t * (curr[0] - prev[0])
+                    iy = prev[1] + t * (curr[1] - prev[1])
+                    out_pts.append((ix, iy, z_near))
+
+        if len(out_pts) < 3:
+            return None
+        return out_pts
+
+    def _project_polygon(self, world_pts: List[Tuple[float, float, float]],
+                         cam_x: float, cam_y: float, cam_z: float,
+                         cam_yaw: float, pitch: float,
+                         z_near: float = 0.08) -> Optional[np.ndarray]:
+        cam_pts = [self._to_cam(px, py, pz, cam_x, cam_y, cam_z, cam_yaw, pitch) for px, py, pz in world_pts]
+        clipped = self._clip_polygon_near_plane(cam_pts, z_near=z_near)
+        if clipped is None:
+            return None
+        screen_pts = [self._cam_to_screen(x, y, z) for x, y, z in clipped]
+        return np.array(screen_pts, dtype=np.int32)
+
+    def _clip_segment_near_plane(self, p1_cam: Tuple[float, float, float],
+                                 p2_cam: Tuple[float, float, float],
+                                 z_near: float = 0.08) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        x1, y1, z1 = p1_cam
+        x2, y2, z2 = p2_cam
+        in1 = z1 >= z_near
+        in2 = z2 >= z_near
+        if not in1 and not in2:
+            return None
+        if in1 and in2:
+            return self._cam_to_screen(x1, y1, z1), self._cam_to_screen(x2, y2, z2)
+        dz = z2 - z1
+        if abs(dz) < 1e-9:
+            return None
+        t = (z_near - z1) / dz
+        ix = x1 + t * (x2 - x1)
+        iy = y1 + t * (y2 - y1)
+        if in1 and not in2:
+            return self._cam_to_screen(x1, y1, z1), self._cam_to_screen(ix, iy, z_near)
+        else:
+            return self._cam_to_screen(ix, iy, z_near), self._cam_to_screen(x2, y2, z2)
+
     # ── 1280x720 HD GTA Chase Graphics Engine (Solid Room & Military Rover) ──
     def _render_frames(self):
         with self.state.lock:
@@ -794,34 +1335,102 @@ class RobotController:
         # Canvas setup: Solid indoor laboratory ceiling / upper wall fill (zero black void)
         frame = np.full((CAMERA_H, CAMERA_W, 3), (180, 185, 192), dtype=np.uint8)
 
-        # ── Step 1: Camera Rig Tuning (The True GTA Feel) ──
+        c_bound = 1.85  # Strict interior bounding box (0.15m safety margin inside 2.0m walls)
+
+        # ── Step 1: Camera Rig Tuning & Spring-Arm Containment ──
         if view_mode == "TPP":
-            # True GTA 3rd-Person Chase: floats 1.4m behind and 0.75m above with -20° downward pitch
-            d_behind = 1.40
-            cam_x = rx - d_behind * math.cos(ryaw)
-            cam_y = ry - d_behind * math.sin(ryaw)
-            cam_z = 0.75
-            cam_yaw = ryaw
-            cam_pitch = math.radians(-20.0)  # -0.349 rad downward tilt
+            # True GTA 3rd-Person Chase with Ray-AABB Spring-Arm Clamping
+            d_behind_max = 1.40
+            min_arm = 0.35
+
+            # Direction vector from rover to camera
+            vx = -math.cos(ryaw)
+            vy = -math.sin(ryaw)
+
+            test_rx = max(-c_bound + 0.01, min(c_bound - 0.01, rx))
+            test_ry = max(-c_bound + 0.01, min(c_bound - 0.01, ry))
+
+            t_hit = 1.0
+            if vx > 1e-6:
+                t_x = (c_bound - test_rx) / (vx * d_behind_max)
+                t_hit = min(t_hit, max(0.0, t_x))
+            elif vx < -1e-6:
+                t_x = (-c_bound - test_rx) / (vx * d_behind_max)
+                t_hit = min(t_hit, max(0.0, t_x))
+
+            if vy > 1e-6:
+                t_y = (c_bound - test_ry) / (vy * d_behind_max)
+                t_hit = min(t_hit, max(0.0, t_y))
+            elif vy < -1e-6:
+                t_y = (-c_bound - test_ry) / (vy * d_behind_max)
+                t_hit = min(t_hit, max(0.0, t_y))
+
+            clamped_dist = max(min_arm, d_behind_max * t_hit)
+            raw_cam_x = test_rx + clamped_dist * vx
+            raw_cam_y = test_ry + clamped_dist * vy
+
+            pull_fraction = max(0.0, min(1.0, 1.0 - (clamped_dist - min_arm) / max(0.01, (d_behind_max - min_arm))))
+
+            # Smooth lateral shoulder offset along the wall toward the arena center
+            u_lat_x = -math.sin(ryaw)
+            u_lat_y = math.cos(ryaw)
+            dot_center = (-rx) * u_lat_x + (-ry) * u_lat_y
+            sign_lat = 1.0 if dot_center >= 0 else -1.0
+            lat_mag = 0.36 * pull_fraction
+
+            cam_x = raw_cam_x + sign_lat * lat_mag * u_lat_x
+            cam_y = raw_cam_y + sign_lat * lat_mag * u_lat_y
+            cam_x = max(-c_bound, min(c_bound, cam_x))
+            cam_y = max(-c_bound, min(c_bound, cam_y))
+
+            # Dynamic elevation: subtle raise (0.75m -> 0.79m)
+            cam_z = 0.75 + 0.04 * pull_fraction
+
+            # Look-at target on rover chassis
+            tgt_x = rx
+            tgt_y = ry
+            tgt_z = 0.05
+
+            dx = tgt_x - cam_x
+            dy = tgt_y - cam_y
+            dz = tgt_z - cam_z
+            d_xy = math.hypot(dx, dy)
+            look_pitch = math.atan2(dz, max(0.15, d_xy))
+
+            # Pitch aims at target + offset so rover sits in lower-middle viewport
+            target_pitch = look_pitch + math.radians(6.5)
+            target_pitch = max(math.radians(-48.0), min(math.radians(-20.0), target_pitch))
+
+            cam_pitch = (1.0 - pull_fraction) * math.radians(-20.0) + pull_fraction * target_pitch
+
+            # Smooth camera yaw blend towards rover target
+            aim_yaw = math.atan2(dy, dx)
+            yaw_diff = (aim_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+            cam_yaw = ryaw + pull_fraction * yaw_diff
+
             horizon_y = int(CAMERA_H / 2.0 + math.tan(cam_pitch) * FOCAL_LENGTH * 0.40)
         elif view_mode in ("TOP", "TOPDOWN"):
             # High-angle tactical overhead surveillance view
-            cam_x = rx - 0.40 * math.cos(ryaw)
-            cam_y = ry - 0.40 * math.sin(ryaw)
+            cam_x = max(-c_bound, min(c_bound, rx - 0.40 * math.cos(ryaw)))
+            cam_y = max(-c_bound, min(c_bound, ry - 0.40 * math.sin(ryaw)))
             cam_z = 2.40
             cam_yaw = ryaw
             cam_pitch = math.radians(-62.0)
             horizon_y = -40
         else:
             # 1st-Person Bumper View ("FPP")
-            cam_x = rx + 0.16 * math.cos(ryaw)
-            cam_y = ry + 0.16 * math.sin(ryaw)
+            cam_x = max(-c_bound, min(c_bound, rx + 0.16 * math.cos(ryaw)))
+            cam_y = max(-c_bound, min(c_bound, ry + 0.16 * math.sin(ryaw)))
             cam_z = 0.16
             cam_yaw = ryaw
             cam_pitch = 0.02
             horizon_y = int(CAMERA_H / 2.0)
 
-        # Draw Visible Overhead LED Light Troffers on Ceiling
+        # Store synchronized camera rig parameters for perception worker
+        self.last_cam_params = (cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+
+        # ── Pass 1: Ceiling & Reflective Dark Polished Concrete Floor ──
+        # Visible Overhead LED Light Troffers on Ceiling
         if horizon_y > 40:
             cv2.rectangle(frame, (int(CAMERA_W * 0.22), 20), (int(CAMERA_W * 0.42), 55), (255, 255, 250), -1)
             cv2.rectangle(frame, (int(CAMERA_W * 0.22), 20), (int(CAMERA_W * 0.42), 55), (140, 145, 150), 2)
@@ -832,103 +1441,142 @@ class RobotController:
         if 0 <= horizon_y < CAMERA_H:
             cv2.rectangle(frame, (0, horizon_y), (CAMERA_W, CAMERA_H), (45, 45, 48), -1)
 
-        # ── Step 2: High-Contrast Perspective Floor Grid & Markings ──
+        # 3D floor quad clipped against camera near-plane
+        floor_world = [
+            (-ARENA_BOUND, -ARENA_BOUND, 0.0),
+            (ARENA_BOUND, -ARENA_BOUND, 0.0),
+            (ARENA_BOUND, ARENA_BOUND, 0.0),
+            (-ARENA_BOUND, ARENA_BOUND, 0.0),
+        ]
+        floor_poly = self._project_polygon(floor_world, cam_x, cam_y, cam_z, cam_yaw, cam_pitch, z_near=0.08)
+        if floor_poly is not None:
+            cv2.fillPoly(frame, [floor_poly], (45, 45, 48))
+
+        # Clean Perspective Floor Grid (Uniform 1px Tiles, Zero Highlighted Axis Lines)
         grid_step = 0.40
         num_grid = int(ARENA_BOUND / grid_step)
         for i in range(-num_grid, num_grid + 1):
             gx = i * grid_step
-            p1 = self._project_point(gx, -ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            p2 = self._project_point(gx, ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            if p1 and p2:
-                color = (65, 68, 74) if i != 0 else (90, 95, 105)
-                thickness = 2 if i == 0 else 1
-                cv2.line(frame, (p1[0], p1[1]), (p2[0], p2[1]), color, thickness)
+            p1_cam = self._to_cam(gx, -ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            p2_cam = self._to_cam(gx, ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            seg = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=0.08)
+            if seg:
+                cv2.line(frame, seg[0], seg[1], (60, 63, 68), 1)
 
         for j in range(-num_grid, num_grid + 1):
             gy = j * grid_step
-            p1 = self._project_point(-ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            p2 = self._project_point(ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            if p1 and p2:
-                color = (65, 68, 74) if j != 0 else (90, 95, 105)
-                thickness = 2 if j == 0 else 1
-                cv2.line(frame, (p1[0], p1[1]), (p2[0], p2[1]), color, thickness)
+            p1_cam = self._to_cam(-ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            p2_cam = self._to_cam(ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            seg = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=0.08)
+            if seg:
+                cv2.line(frame, seg[0], seg[1], (60, 63, 68), 1)
 
-        # Center Floor Ring & Amber Boundary Line
-        c_proj = self._project_point(0, 0, 0.001, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-        if c_proj:
-            scale_c = FOCAL_LENGTH / max(0.1, c_proj[2])
-            cv2.circle(frame, (c_proj[0], c_proj[1]), max(8, int(0.45 * scale_c)), (85, 90, 100), 2)
+        # ── Pass 2: Ground Contact Shadows (Drawn Directly on Floor Before Walls) ──
+        for obj in ARENA_OBJECTS.values():
+            b_proj = self._project_point(obj.x, obj.y, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            if b_proj:
+                bx, by, bz = b_proj
+                scale = FOCAL_LENGTH / max(0.1, bz)
+                r_px = max(6, int(obj.radius * scale))
+                shadow_overlay = frame.copy()
+                cv2.ellipse(shadow_overlay, (bx, by), (r_px + 8, max(4, int(r_px * 0.45))),
+                            0, 0, 360, (0, 0, 0), -1)
+                cv2.addWeighted(shadow_overlay, 0.48, frame, 0.52, 0, frame)
 
-        # ── Step 3: Solid Enclosing Facility Walls (2.4m High, Clipped to Near-Plane) ──
-        wall_pts = [
-            (-ARENA_BOUND, -ARENA_BOUND),
-            (ARENA_BOUND, -ARENA_BOUND),
-            (ARENA_BOUND, ARENA_BOUND),
-            (-ARENA_BOUND, ARENA_BOUND),
-        ]
+        if view_mode in ("TPP", "TOP", "TOPDOWN"):
+            r_proj = self._project_point(rx, ry, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            if r_proj:
+                rcx, rcy, rz = r_proj
+                scale = FOCAL_LENGTH / max(0.1, rz)
+                sw_w = max(18, int(0.36 * scale))
+                sw_h = max(8, int(0.22 * scale))
+                shadow_overlay = frame.copy()
+                cv2.ellipse(shadow_overlay, (rcx, rcy), (sw_w, sw_h),
+                            int(-math.degrees(ryaw)), 0, 360, (0, 0, 0), -1)
+                cv2.addWeighted(shadow_overlay, 0.45, frame, 0.55, 0, frame)
+
+        # ── Pass 3: Solid Enclosing Facility Walls (Near-Plane Clipped, Culled & Depth Sorted) ──
         wall_h = 2.40
         baseboard_h = 0.14
-        near_z = 0.12
+        near_z = 0.08
+        B = ARENA_BOUND
 
-        for idx in range(4):
-            x1, y1 = wall_pts[idx]
-            x2, y2 = wall_pts[(idx + 1) % 4]
+        wall_specs = [
+            # South wall (y = -B, facing +Y into room)
+            {
+                "center": (0.0, -B), "inward": (0.0, 1.0),
+                "quad": [(-B, -B, 0.0), (B, -B, 0.0), (B, -B, wall_h), (-B, -B, wall_h)],
+                "bb_quad": [(-B, -B, 0.0), (B, -B, 0.0), (B, -B, baseboard_h), (-B, -B, baseboard_h)],
+                "bb_line": [(-B, -B, baseboard_h), (B, -B, baseboard_h)],
+                "top_line": [(-B, -B, wall_h), (B, -B, wall_h)],
+            },
+            # East wall (x = +B, facing -X into room)
+            {
+                "center": (B, 0.0), "inward": (-1.0, 0.0),
+                "quad": [(B, -B, 0.0), (B, B, 0.0), (B, B, wall_h), (B, -B, wall_h)],
+                "bb_quad": [(B, -B, 0.0), (B, B, 0.0), (B, B, baseboard_h), (B, -B, baseboard_h)],
+                "bb_line": [(B, -B, baseboard_h), (B, B, baseboard_h)],
+                "top_line": [(B, -B, wall_h), (B, B, wall_h)],
+            },
+            # North wall (y = +B, facing -Y into room)
+            {
+                "center": (0.0, B), "inward": (0.0, -1.0),
+                "quad": [(B, B, 0.0), (-B, B, 0.0), (-B, B, wall_h), (B, B, wall_h)],
+                "bb_quad": [(B, B, 0.0), (-B, B, 0.0), (-B, B, baseboard_h), (B, B, baseboard_h)],
+                "bb_line": [(B, B, baseboard_h), (-B, B, baseboard_h)],
+                "top_line": [(B, B, wall_h), (-B, B, wall_h)],
+            },
+            # West wall (x = -B, facing +X into room)
+            {
+                "center": (-B, 0.0), "inward": (1.0, 0.0),
+                "quad": [(-B, B, 0.0), (-B, -B, 0.0), (-B, -B, wall_h), (-B, B, wall_h)],
+                "bb_quad": [(-B, B, 0.0), (-B, -B, 0.0), (-B, -B, baseboard_h), (-B, B, baseboard_h)],
+                "bb_line": [(-B, B, baseboard_h), (-B, -B, baseboard_h)],
+                "top_line": [(-B, B, wall_h), (-B, -B, wall_h)],
+            },
+        ]
 
-            # Bottom corners in camera space
-            xc1, yc1, zc1 = self._to_cam(x1, y1, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            xc2, yc2, zc2 = self._to_cam(x2, y2, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            # Top corners in camera space
-            xt1, yt1, zt1 = self._to_cam(x1, y1, wall_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            xt2, yt2, zt2 = self._to_cam(x2, y2, wall_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            # Baseboard top corners
-            xbb1, ybb1, zbb1 = self._to_cam(x1, y1, baseboard_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            xbb2, ybb2, zbb2 = self._to_cam(x2, y2, baseboard_h, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+        # Depth-sort walls from furthest to closest to camera
+        for w in wall_specs:
+            w["dist"] = math.hypot(cam_x - w["center"][0], cam_y - w["center"][1])
+        wall_specs.sort(key=lambda w: w["dist"], reverse=True)
 
-            if zc1 < near_z and zc2 < near_z:
-                continue  # Wall is entirely behind camera
+        for w in wall_specs:
+            # Backface culling: verify camera is on interior side of the wall
+            vx = cam_x - w["center"][0]
+            vy = cam_y - w["center"][1]
+            dot = vx * w["inward"][0] + vy * w["inward"][1]
+            if dot <= 0.01:
+                continue
 
-            # Near-plane clipping for continuous solid walls
-            if zc1 < near_z:
-                t = (near_z - zc1) / (zc2 - zc1)
-                xc1 = xc1 + t * (xc2 - xc1)
-                yc1 = yc1 + t * (yc2 - yc1)
-                zc1 = near_z
-                xt1 = xt1 + t * (xt2 - xt1)
-                yt1 = yt1 + t * (yt2 - yt1)
-                zt1 = near_z
-                xbb1 = xbb1 + t * (xbb2 - xbb1)
-                ybb1 = ybb1 + t * (ybb2 - ybb1)
-                zbb1 = near_z
-            elif zc2 < near_z:
-                t = (near_z - zc2) / (zc1 - zc2)
-                xc2 = xc2 + t * (xc1 - xc2)
-                yc2 = yc2 + t * (yc1 - yc2)
-                zc2 = near_z
-                xt2 = xt2 + t * (xt1 - xt2)
-                yt2 = yt2 + t * (yt1 - yt2)
-                zt2 = near_z
-                xbb2 = xbb2 + t * (xbb1 - xbb2)
-                ybb2 = ybb2 + t * (ybb1 - ybb2)
-                zbb2 = near_z
+            # Render drywall quad
+            wall_poly = self._project_polygon(w["quad"], cam_x, cam_y, cam_z, cam_yaw, cam_pitch, z_near=near_z)
+            if wall_poly is not None:
+                cv2.fillPoly(frame, [wall_poly], (235, 238, 240))
+                cv2.polylines(frame, [wall_poly], True, (190, 195, 200), 1)
 
-            p_b1 = self._cam_to_screen(xc1, yc1, zc1)
-            p_b2 = self._cam_to_screen(xc2, yc2, zc2)
-            p_t1 = self._cam_to_screen(xt1, yt1, zt1)
-            p_t2 = self._cam_to_screen(xt2, yt2, zt2)
-            p_bb1 = self._cam_to_screen(xbb1, ybb1, zbb1)
-            p_bb2 = self._cam_to_screen(xbb2, ybb2, zbb2)
+            # Render dark graphite baseboard quad
+            bb_poly = self._project_polygon(w["bb_quad"], cam_x, cam_y, cam_z, cam_yaw, cam_pitch, z_near=near_z)
+            if bb_poly is not None:
+                cv2.fillPoly(frame, [bb_poly], (30, 32, 35))
 
-            # Solid architectural facility wall (clean matte off-white drywall)
-            wall_poly = np.array([p_b1, p_b2, p_t2, p_t1], dtype=np.int32)
-            cv2.fillPoly(frame, [wall_poly], (235, 238, 240))
-            # Dark graphite baseboard
-            bb_poly = np.array([p_b1, p_b2, p_bb2, p_bb1], dtype=np.int32)
-            cv2.fillPoly(frame, [bb_poly], (30, 32, 35))
-            cv2.line(frame, p_bb1, p_bb2, (50, 52, 56), 1)
+            # Baseboard top trim line
+            p1_cam = self._to_cam(w["bb_line"][0][0], w["bb_line"][0][1], w["bb_line"][0][2],
+                                  cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            p2_cam = self._to_cam(w["bb_line"][1][0], w["bb_line"][1][1], w["bb_line"][1][2],
+                                  cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            seg_bb = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=near_z)
+            if seg_bb is not None:
+                cv2.line(frame, seg_bb[0], seg_bb[1], (50, 52, 56), 1)
+
             # High-vis yellow/amber hazard safety coping
-            cv2.line(frame, p_t1, p_t2, (25, 195, 245), 3)
-            # Wall perimeter edge seam
-            cv2.polylines(frame, [wall_poly], True, (190, 195, 200), 1)
+            p1_cam = self._to_cam(w["top_line"][0][0], w["top_line"][0][1], w["top_line"][0][2],
+                                  cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            p2_cam = self._to_cam(w["top_line"][1][0], w["top_line"][1][1], w["top_line"][1][2],
+                                  cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+            seg_top = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=near_z)
+            if seg_top is not None:
+                cv2.line(frame, seg_top[0], seg_top[1], (25, 195, 245), 3)
 
         # ── Step 4: Depth-Sorted Rendering of 3D Objects & Rover (Painter's Algorithm) ──
         render_queue = []
@@ -961,10 +1609,10 @@ class RobotController:
         for item in render_queue:
             if item["type"] == "object":
                 self._render_3d_object(frame, item["obj"], item["key"], target_key,
-                                       cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                                       cam_x, cam_y, cam_z, cam_yaw, cam_pitch, render_shadow=False)
             elif item["type"] == "rover":
                 self._render_3d_rover(frame, rx, ry, ryaw, vl, vr, wheel_l, wheel_r,
-                                      cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+                                      cam_x, cam_y, cam_z, cam_yaw, cam_pitch, render_shadow=False)
 
         # Store clean un-annotated frame for perception worker & depth map
         with self.state.lock:
@@ -1025,7 +1673,7 @@ class RobotController:
 
     # ── Realistic 3D Asset Rendering Engine (Traffic Cone, Potted Plant, Chair, Crates, Hazard Box) ──
     def _render_3d_object(self, frame, obj: ArenaObject, key: str, target_key: str,
-                          cam_x, cam_y, cam_z, cam_yaw, cam_pitch):
+                          cam_x, cam_y, cam_z, cam_yaw, cam_pitch, render_shadow: bool = True):
         b_proj = self._project_point(obj.x, obj.y, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
         t_proj = self._project_point(obj.x, obj.y, obj.height, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
         if not b_proj or not t_proj:
@@ -1038,10 +1686,11 @@ class RobotController:
         r_px = max(6, int(obj.radius * scale))
 
         # 1. Soft Realistic Ground Contact Shadow
-        shadow_overlay = frame.copy()
-        cv2.ellipse(shadow_overlay, (bx, by), (r_px + 8, max(4, int(r_px * 0.45))),
-                    0, 0, 360, (0, 0, 0), -1)
-        cv2.addWeighted(shadow_overlay, 0.48, frame, 0.52, 0, frame)
+        if render_shadow:
+            shadow_overlay = frame.copy()
+            cv2.ellipse(shadow_overlay, (bx, by), (r_px + 8, max(4, int(r_px * 0.45))),
+                        0, 0, 360, (0, 0, 0), -1)
+            cv2.addWeighted(shadow_overlay, 0.48, frame, 0.52, 0, frame)
 
         # 2. Asset-Specific High-Fidelity 3D Geometry
         if key == "RED":
@@ -1264,21 +1913,9 @@ class RobotController:
                                      [facet_pts_t[j][0], facet_pts_t[j][1]], [facet_pts_t[i][0], facet_pts_t[i][1]]], dtype=np.int32)
                     cv2.fillPoly(frame, [poly], obj.bgr_color)
 
-        # 3. Target HUD Reticle (If active chase target)
-        if key == target_key:
-            reticle_y = ty - 18
-            cv2.circle(frame, (tx, reticle_y), 12, (0, 229, 255), 2)
-            cv2.circle(frame, (tx, reticle_y), 4, (0, 229, 255), -1)
-            cv2.line(frame, (tx - 18, reticle_y), (tx + 18, reticle_y), (0, 229, 255), 1)
-            cv2.line(frame, (tx, reticle_y - 18), (tx, reticle_y + 18), (0, 229, 255), 1)
-
-            tag = f"LOCKED: {obj.name.upper()}"
-            cv2.putText(frame, tag, (tx - len(tag) * 4, reticle_y - 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 229, 255), 1, cv2.LINE_AA)
-
     # ── 3D Rover Model Rendering (Military Prototype: Matte Gunmetal & Subtle White LEDs) ──
     def _render_3d_rover(self, frame, rx, ry, ryaw, vl, vr, wheel_l, wheel_r,
-                         cam_x, cam_y, cam_z, cam_yaw, cam_pitch):
+                         cam_x, cam_y, cam_z, cam_yaw, cam_pitch, render_shadow: bool = True):
         r_proj = self._project_point(rx, ry, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
         if not r_proj:
             return
@@ -1287,27 +1924,13 @@ class RobotController:
         scale = FOCAL_LENGTH / max(0.1, rz)
 
         # 1. Realistic Ambient Occlusion Ground Contact Shadow
-        sw_w = max(18, int(0.36 * scale))
-        sw_h = max(8, int(0.22 * scale))
-        shadow_overlay = frame.copy()
-        cv2.ellipse(shadow_overlay, (rcx, rcy), (sw_w, sw_h),
-                    int(-math.degrees(ryaw)), 0, 360, (0, 0, 0), -1)
-        cv2.addWeighted(shadow_overlay, 0.45, frame, 0.55, 0, frame)
-
-        # 2. Subtle Forward Headlight Ground Illumination Beam (Crisp Pure White)
-        beam_len = 0.95
-        beam_spread = 0.35
-        b_left = self._project_point(rx + beam_len * math.cos(ryaw) - beam_spread * math.sin(ryaw),
-                                     ry + beam_len * math.sin(ryaw) + beam_spread * math.cos(ryaw),
-                                     0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-        b_right = self._project_point(rx + beam_len * math.cos(ryaw) + beam_spread * math.sin(ryaw),
-                                      ry + beam_len * math.sin(ryaw) - beam_spread * math.cos(ryaw),
-                                      0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-        if b_left and b_right:
-            beam_poly = np.array([[rcx, rcy], [b_left[0], b_left[1]], [b_right[0], b_right[1]]], dtype=np.int32)
-            beam_layer = frame.copy()
-            cv2.fillPoly(beam_layer, [beam_poly], (245, 248, 255))  # Crisp white headlight beam
-            cv2.addWeighted(beam_layer, 0.14, frame, 0.86, 0, frame)
+        if render_shadow:
+            sw_w = max(18, int(0.36 * scale))
+            sw_h = max(8, int(0.22 * scale))
+            shadow_overlay = frame.copy()
+            cv2.ellipse(shadow_overlay, (rcx, rcy), (sw_w, sw_h),
+                        int(-math.degrees(ryaw)), 0, 360, (0, 0, 0), -1)
+            cv2.addWeighted(shadow_overlay, 0.45, frame, 0.55, 0, frame)
 
         # 3. Sleek Elongated Matte Gunmetal AGV Chassis Hull
         bw_2 = 0.18  # elongated length
@@ -1414,6 +2037,10 @@ class RobotController:
                 "speed_r": round(self.state.right_speed, 2),
                 "mode": self.state.mode.value,
                 "target": self.state.target_name,
+                "target_key": self.state.target_key,
+                "target_x": round(self.state.target_x, 2),
+                "target_y": round(self.state.target_y, 2),
+                "target_conf": round(self.state.target_conf, 2),
                 "status": self.state.status_text,
                 "view_mode": self.state.view_mode,
                 "vlm_scores": self.state.vlm_scores,
