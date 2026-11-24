@@ -2316,15 +2316,97 @@ const LaserFlow = React.memo(({
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
+    // Compact Vector SVG Charts for Folder Dossiers
+    // ─────────────────────────────────────────────────────────────────────────────
+    function DatasetPieChart() {
+      return (
+        <svg viewBox="0 0 200 90" width="100%" height="auto" style={{ display: 'block', maxHeight: '72px' }}>
+          <g transform="translate(45, 45)">
+            {/* Donut arcs: r=32, strokeWidth=13 -> C = 2 * PI * 32 ~= 201.06 */}
+            {/* Hazards 55%: length = 110.58 */}
+            <circle cx="0" cy="0" r="32" fill="none" stroke="#00e5ff" strokeWidth="13"
+              strokeDasharray="110.58 201.06" strokeDashoffset="0" transform="rotate(-90)" />
+            {/* Indoor 30%: length = 60.32 */}
+            <circle cx="0" cy="0" r="32" fill="none" stroke="#a855f7" strokeWidth="13"
+              strokeDasharray="60.32 201.06" strokeDashoffset="-110.58" transform="rotate(-90)" />
+            {/* Outdoor 15%: length = 30.16 */}
+            <circle cx="0" cy="0" r="32" fill="none" stroke="#f59e0b" strokeWidth="13"
+              strokeDasharray="30.16 201.06" strokeDashoffset="-170.9" transform="rotate(-90)" />
+            <text x="0" y="2" textAnchor="middle" dominantBaseline="middle"
+              fontSize="9" fontWeight="800" fill="#0f172a" fontFamily="var(--font-sans)">25 Cls</text>
+          </g>
+          {/* Legend */}
+          <g transform="translate(98, 18)" fontFamily="var(--font-mono)" fontSize="7.5">
+            <rect x="0" y="0" width="6" height="6" rx="1.5" fill="#00e5ff" />
+            <text x="10" y="6" fill="#0f172a" fontWeight="700">Obstacles (55%)</text>
+            
+            <rect x="0" y="22" width="6" height="6" rx="1.5" fill="#a855f7" />
+            <text x="10" y="28" fill="#0f172a" fontWeight="700">Furniture (30%)</text>
+            
+            <rect x="0" y="44" width="6" height="6" rx="1.5" fill="#f59e0b" />
+            <text x="10" y="50" fill="#0f172a" fontWeight="700">Structures (15%)</text>
+          </g>
+        </svg>
+      );
+    }
+
+    function PipelineFlowchart() {
+      return (
+        <svg viewBox="0 0 300 44" width="100%" height="auto" style={{ display: 'block', maxHeight: '44px', margin: '2px 0' }}>
+          <defs>
+            <marker id="flow-arrow" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+              <path d="M 0 0 L 6 3 L 0 6 z" fill="#0284c7" />
+            </marker>
+            <linearGradient id="flow-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#f0f9ff" />
+              <stop offset="100%" stopColor="#e0f2fe" />
+            </linearGradient>
+          </defs>
+          
+          {/* Webots Sim */}
+          <g transform="translate(2, 6)">
+            <rect width="64" height="30" rx="4" fill="url(#flow-grad)" stroke="#0284c7" strokeWidth="1" />
+            <text x="32" y="13" textAnchor="middle" fontSize="6.5" fontWeight="700" fill="#0284c7" fontFamily="var(--font-mono)">WEBOTS</text>
+            <text x="32" y="23" textAnchor="middle" fontSize="6" fontWeight="600" fill="#475569" fontFamily="var(--font-sans)">Physics 60Hz</text>
+          </g>
+          <line x1="68" y1="21" x2="77" y2="21" stroke="#0284c7" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
+
+          {/* FastAPI Bridge */}
+          <g transform="translate(79, 6)">
+            <rect width="66" height="30" rx="4" fill="#f8fafc" stroke="#64748b" strokeWidth="1" />
+            <text x="33" y="13" textAnchor="middle" fontSize="6.5" fontWeight="700" fill="#0f172a" fontFamily="var(--font-mono)">FASTAPI</text>
+            <text x="33" y="23" textAnchor="middle" fontSize="6" fontWeight="600" fill="#475569" fontFamily="var(--font-sans)">Async WS / IPC</text>
+          </g>
+          <line x1="147" y1="21" x2="156" y2="21" stroke="#0284c7" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
+
+          {/* YOLOv8 / MPS */}
+          <g transform="translate(158, 6)">
+            <rect width="64" height="30" rx="4" fill="#f5f3ff" stroke="#a855f7" strokeWidth="1" />
+            <text x="32" y="13" textAnchor="middle" fontSize="6.5" fontWeight="700" fill="#7c3aed" fontFamily="var(--font-mono)">YOLOV8</text>
+            <text x="32" y="23" textAnchor="middle" fontSize="6" fontWeight="600" fill="#475569" fontFamily="var(--font-sans)">Apple MPS FP16</text>
+          </g>
+          <line x1="224" y1="21" x2="233" y2="21" stroke="#0284c7" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
+
+          {/* React / HUD */}
+          <g transform="translate(235, 6)">
+            <rect width="63" height="30" rx="4" fill="#ecfdf5" stroke="#10b981" strokeWidth="1" />
+            <text x="31.5" y="13" textAnchor="middle" fontSize="6.5" fontWeight="700" fill="#059669" fontFamily="var(--font-mono)">REACT HUD</text>
+            <text x="31.5" y="23" textAnchor="middle" fontSize="6" fontWeight="600" fill="#475569" fontFamily="var(--font-sans)">30 FPS Canvas</text>
+          </g>
+        </svg>
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
     // Mini Spec-Sheet Component for <Folder /> Cards (Zero-Wireframe, Full Real Content)
     // ─────────────────────────────────────────────────────────────────────────────
-    function FolderSpecCard({ category, title, description, spec1, spec2, rawSpec, metric, specs }) {
+    function FolderSpecCard({ category, title, description, spec1, spec2, rawSpec, metric, specs, chart }) {
       const bottomSpec = rawSpec || metric || specs;
       return (
         <div
           className="folder-spec-card select-none"
           style={{
-            padding: '12px',
+            padding: '12px 14px',
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'space-between',
@@ -2334,10 +2416,12 @@ const LaserFlow = React.memo(({
             width: '100%',
             boxSizing: 'border-box',
             fontFamily: '"Plus Jakarta Sans", var(--font-sans)',
-            textAlign: 'left'
+            textAlign: 'left',
+            borderRadius: '6px',
+            overflow: 'hidden'
           }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: '1 1 auto', minHeight: 0 }}>
             {category && (
               <span
                 className="folder-spec-category"
@@ -2368,13 +2452,18 @@ const LaserFlow = React.memo(({
                 {title}
               </h4>
             )}
+            {chart && (
+              <div style={{ margin: '3px 0 2px 0', width: '100%' }}>
+                {chart}
+              </div>
+            )}
             {description && (
               <p
                 className="folder-spec-desc"
                 style={{
-                  fontSize: '8.5px',
-                  lineHeight: 1.35,
-                  color: '#2d3242',
+                  fontSize: '8px',
+                  lineHeight: 1.6,
+                  color: '#334155',
                   fontWeight: 500,
                   margin: '2px 0 0 0'
                 }}
@@ -2388,15 +2477,16 @@ const LaserFlow = React.memo(({
             className="folder-spec-footer"
             style={{
               borderTop: '1px solid #e5e7eb',
-              paddingTop: '6px',
-              marginTop: '6px',
+              paddingTop: '5px',
+              marginTop: '4px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
               fontSize: '8px',
               fontWeight: 600,
               fontFamily: '"JetBrains Mono", monospace',
-              lineHeight: 1.2
+              lineHeight: 1.2,
+              flexShrink: 0
             }}
           >
             {bottomSpec ? (
@@ -3075,7 +3165,7 @@ const paintBack = (g, top, bottom, dpr) => {
   return canvas;
 };
 
-const DocumentCard = ({ category, title, description, spec1, spec2, rawSpec, metric, specs }) => (
+const DocumentCard = ({ category, title, description, spec1, spec2, rawSpec, metric, specs, chart }) => (
   <FolderSpecCard
     category={category || "SPECIFICATION"}
     title={title || "Module"}
@@ -3083,6 +3173,7 @@ const DocumentCard = ({ category, title, description, spec1, spec2, rawSpec, met
     spec1={spec1 || "Edge"}
     spec2={spec2 || "Native"}
     rawSpec={rawSpec || metric || specs}
+    chart={chart}
   />
 );
 
@@ -3106,6 +3197,7 @@ const renderItem = item => {
         spec1={item.spec1}
         spec2={item.spec2}
         rawSpec={item.rawSpec || item.metric || item.specs}
+        chart={item.chart}
       />
     );
   }
@@ -5026,50 +5118,52 @@ const Folder = ({
                     theme="dark"
                     items={[
                       {
-                        category: "PERCEPTION",
-                        title: "The Eyes: YOLOv8",
-                        description: "Scans every frame in real time and draws a box around anything in the way — chairs, stairs, cones, open manholes — so the rover can steer around it without being told how.",
-                        spec1: "4.9 ms / img",
-                        spec2: "60 FPS Loop",
+                        category: "PIPELINE & RUNTIME",
+                        title: "End-to-End Real-Time IPC Loop",
+                        description: "Real-time closed-loop edge pipeline linking Webots rigid-body physics, FastAPI async WebSocket IPC, PyTorch YOLOv8 on Apple Silicon MPS, and client-side HUD at sub-15ms latency.",
+                        spec1: "Sub-15ms Latency",
+                        spec2: "60 FPS Local IPC",
+                        chart: <PipelineFlowchart />,
                         content: (
                           <FolderSpecCard
-                            category="PERCEPTION"
-                            title="The Eyes: YOLOv8"
-                            description="Scans every frame in real time and draws a box around anything in the way — chairs, stairs, cones, open manholes — so the rover can steer around it without being told how."
-                            spec1="4.9 ms / img"
-                            spec2="60 FPS Loop"
+                            category="PIPELINE & RUNTIME"
+                            title="End-to-End Real-Time IPC Loop"
+                            description="Real-time closed-loop edge pipeline linking Webots rigid-body physics, FastAPI async WebSocket IPC, PyTorch YOLOv8 on Apple Silicon MPS, and client-side HUD at sub-15ms latency."
+                            spec1="Sub-15ms Latency"
+                            spec2="60 FPS Local IPC"
+                            chart={<PipelineFlowchart />}
                           />
                         )
                       },
                       {
                         category: "SEMANTICS",
-                        title: "The Brain: OpenAI CLIP",
-                        description: "Understands plain-English goals it was never specifically trained on. Tell it to ‘find the red fire extinguisher’ and CLIP compares that sentence against what the camera sees, matching meaning instead of memorized labels.",
+                        title: "The Brain: OpenAI CLIP ViT-B/32",
+                        description: "Dual-encoder zero-shot classification evaluating 512-dimensional multimodal embeddings against plain-English prompts in 2.6µs cached lookup time, eliminating fixed-vocabulary limitations.",
                         spec1: "2.6 µs Cache",
-                        spec2: "Zero-Shot",
+                        spec2: "Zero-Shot ViT-B/32",
                         content: (
                           <FolderSpecCard
                             category="SEMANTICS"
-                            title="The Brain: OpenAI CLIP"
-                            description="Understands plain-English goals it was never specifically trained on. Tell it to ‘find the red fire extinguisher’ and CLIP compares that sentence against what the camera sees, matching meaning instead of memorized labels." 
+                            title="The Brain: OpenAI CLIP ViT-B/32"
+                            description="Dual-encoder zero-shot classification evaluating 512-dimensional multimodal embeddings against plain-English prompts in 2.6µs cached lookup time, eliminating fixed-vocabulary limitations."
                             spec1="2.6 µs Cache"
-                            spec2="Zero-Shot"
+                            spec2="Zero-Shot ViT-B/32"
                           />
                         )
                       },
                       {
-                        category: "EDGE RUNTIME",
-                        title: "Sovereign Edge Loop",
-                        description: "Both models run entirely on your own machine. A FastAPI WebSocket bridge streams results into the Webots simulation 60 times a second — no cloud calls, no rate limits, no dependency on someone else’s server being online.",
-                        spec1: "0 Cloud Calls",
-                        spec2: "Local IPC",
+                        category: "PHYSICS & CAMERA",
+                        title: "Kinematics & Spring-Arm Chase Cam",
+                        description: "Real-time 60Hz Webots differential drive simulation with Dynamic Window Approach (DWA) obstacle avoidance and Ray-AABB spring-arm camera containment preventing wall clipping.",
+                        spec1: "60 Hz Rigid-Body",
+                        spec2: "Ray-AABB Spring-Arm",
                         content: (
                           <FolderSpecCard
-                            category="EDGE RUNTIME"
-                            title="Sovereign Edge Loop"
-                            description="Both models run entirely on your own machine. A FastAPI WebSocket bridge streams results into the Webots simulation 60 times a second — no cloud calls, no rate limits, no dependency on someone else’s server being online."
-                            spec1="0 Cloud Calls"
-                            spec2="Local IPC"
+                            category="PHYSICS & CAMERA"
+                            title="Kinematics & Spring-Arm Chase Cam"
+                            description="Real-time 60Hz Webots differential drive simulation with Dynamic Window Approach (DWA) obstacle avoidance and Ray-AABB spring-arm camera containment preventing wall clipping."
+                            spec1="60 Hz Rigid-Body"
+                            spec2="Ray-AABB Spring-Arm"
                           />
                         )
                       }
@@ -5171,49 +5265,51 @@ const Folder = ({
                     items={[
                       {
                         category: "DATA SOURCE",
-                        title: "Fused Kaggle Datasets",
-                        description: "Built from two public Kaggle datasets — one of office obstacles, one of general hazards — merged into a single 25-class format that covers both indoor and outdoor scenes.",
+                        title: "Fused 25-Class Hazard Corpus",
+                        description: "Unified indoor/outdoor hazard benchmarks merged from public Kaggle corpora across 1,240 labeled frames into an 80/20 train-validation split spanning dynamic obstacles, office furniture, and outdoor architecture.",
                         spec1: "25 Classes",
-                        spec2: "80/20 Split",
+                        spec2: "1,240 Frames (80/20)",
+                        chart: <DatasetPieChart />,
                         content: (
                           <FolderSpecCard
                             category="DATA SOURCE"
-                            title="Fused Kaggle Datasets"
-                            description="Built from two public Kaggle datasets — one of office obstacles, one of general hazards — merged into a single 25-class format that covers both indoor and outdoor scenes."
+                            title="Fused 25-Class Hazard Corpus"
+                            description="Unified indoor/outdoor hazard benchmarks merged from public Kaggle corpora across 1,240 labeled frames into an 80/20 train-validation split spanning dynamic obstacles, office furniture, and outdoor architecture."
                             spec1="25 Classes"
-                            spec2="80/20 Split"
+                            spec2="1,240 Frames (80/20)"
+                            chart={<DatasetPieChart />}
                           />
                         )
                       },
                       {
                         category: "PREPROCESSING",
-                        title: "Real-to-Sim Augmentation",
-                        description: "Narrowed down to 800 representative images, then multiplied their variety with mosaic tiling, mixup blending, perspective warps, and color jitter — so a model trained on real photos still recognizes hazards in the simulator’s 3D textures.",
-                        spec1: "800 Images",
-                        spec2: "Mosaic + Mixup",
+                        title: "Real-to-Sim Domain Randomization",
+                        description: "Curated 800 core anchor frames expanded via 4x Mosaic tiling, MixUp blending, random perspective homography warps, and HSV photometric jitter to guarantee sim-to-real invariance.",
+                        spec1: "800 Anchor Frames",
+                        spec2: "Mosaic 4x + MixUp",
                         content: (
                           <FolderSpecCard
                             category="PREPROCESSING"
-                            title="Real-to-Sim Augmentation"
-                            description="Narrowed down to 800 representative images, then multiplied their variety with mosaic tiling, mixup blending, perspective warps, and color jitter — so a model trained on real photos still recognizes hazards in the simulator’s 3D textures."
-                            spec1="800 Images"
-                            spec2="Mosaic + Mixup"
+                            title="Real-to-Sim Domain Randomization"
+                            description="Curated 800 core anchor frames expanded via 4x Mosaic tiling, MixUp blending, random perspective homography warps, and HSV photometric jitter to guarantee sim-to-real invariance."
+                            spec1="800 Anchor Frames"
+                            spec2="Mosaic 4x + MixUp"
                           />
                         )
                       },
                       {
-                        category: "DEPLOYMENT",
-                        title: "T4 Training → M3 Export",
-                        description: "Trained for 29 passes on an NVIDIA T4 GPU in Google Colab, then shrunk to half-precision (FP16) ONNX and PyTorch weights so it runs smoothly on a local Apple M3 Pro chip — no GPU required on the machine that actually runs the rover.",
+                        category: "QUANTIZATION & DEPLOYMENT",
+                        title: "T4 Cloud Training → M3 FP16 Export",
+                        description: "29 epochs on an NVIDIA T4 GPU in Google Colab reaching 0.594 mAP@50 with Cosine Annealing, quantized to 6.18 MB half-precision (FP16) ONNX/PyTorch MPS weights running natively on Apple Silicon.",
                         spec1: "0.594 mAP@50",
-                        spec2: "6.18 MB FP16",
+                        spec2: "6.18 MB FP16 MPS",
                         content: (
                           <FolderSpecCard
-                            category="DEPLOYMENT"
-                            title="T4 Training → M3 Export"
-                            description="Trained for 29 passes on an NVIDIA T4 GPU in Google Colab, then shrunk to half-precision (FP16) ONNX and PyTorch weights so it runs smoothly on a local Apple M3 Pro chip — no GPU required on the machine that actually runs the rover."
+                            category="QUANTIZATION & DEPLOYMENT"
+                            title="T4 Cloud Training → M3 FP16 Export"
+                            description="29 epochs on an NVIDIA T4 GPU in Google Colab reaching 0.594 mAP@50 with Cosine Annealing, quantized to 6.18 MB half-precision (FP16) ONNX/PyTorch MPS weights running natively on Apple Silicon."
                             spec1="0.594 mAP@50"
-                            spec2="6.18 MB FP16"
+                            spec2="6.18 MB FP16 MPS"
                           />
                         )
                       }
@@ -5274,25 +5370,59 @@ const Folder = ({
                 id="section-simulation"
                 className="w-full flex flex-col gap-6 z-10 stage-reveal-enter"
               >
-                <MediaBreakout
-                  title="3D Rigid-Body Physics &amp; GTA Chase Cam"
-                  badge="60 FPS MPS"
-                  caption="The rover’s physics, steering, and LiDAR scanning, all simulated live in Webots while the vision model runs alongside it on Apple Silicon."
-                >
-                  <div className="rounded-xl overflow-hidden aspect-video flex items-center justify-center foggy-glass-card">
-                    <video
-                      controls
-                      autoPlay
-                      loop
-                      muted
-                      playsInline
-                      className="w-full h-full object-cover"
+                <div className="flex flex-col gap-8 w-full">
+                  <MediaBreakout
+                    title="3D Rigid-Body Physics &amp; GTA Chase Cam"
+                    badge="1080p @ 30 FPS • 60 FPS Engine"
+                    caption="The rover’s physics, steering, and LiDAR scanning, all simulated live in Webots while the vision model runs alongside it on Apple Silicon with Ray-AABB spring-arm camera containment."
+                  >
+                    <div className="rounded-xl overflow-hidden aspect-video flex items-center justify-center foggy-glass-card">
+                      <video
+                        controls
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        className="w-full h-full object-cover"
+                      >
+                        <source src="./media/patrol_mode.mp4" type="video/mp4" />
+                        Your browser does not support the video tag.
+                      </video>
+                    </div>
+                  </MediaBreakout>
+
+                  <MediaBreakout
+                    title="Webots Simulation Arena &amp; Clutter Object Setup"
+                    badge="webots_arena_overview.png • 1080p Native"
+                    caption="Clean concrete arena layout showing calibrated obstacle placements (plant, chair, barrel, cone, fire extinguisher) and zero-overlay 3D viewport."
+                  >
+                    <div
+                      className="group relative rounded-xl overflow-hidden cursor-zoom-in transition-all duration-300 hover:border-cyan-500/50 hover:shadow-[0_0_30px_rgba(0,229,255,0.15)] foggy-glass-card"
+                      onClick={() => openLightbox({
+                        src: "./media/webots_arena_overview.png",
+                        title: "Webots Simulation Arena & Clutter Setup",
+                        badge: "1920x1080 Native",
+                        caption: "Full simulation arena environment with calibrated obstacles and clean concrete floor."
+                      })}
                     >
-                      <source src="./media/patrol_mode.mp4" type="video/mp4" />
-                      Your browser does not support the video tag.
-                    </video>
-                  </div>
-                </MediaBreakout>
+                      <div className="w-full aspect-[16/9] max-h-[560px] flex items-center justify-center p-2 sm:p-4">
+                        <img
+                          src="./media/webots_arena_overview.png"
+                          alt="Webots Arena Overview"
+                          className="w-full h-full object-contain filter contrast-[1.03] transition-transform duration-300 group-hover:scale-[1.01] showcase-4k"
+                        />
+                      </div>
+                      <div className="absolute bottom-3 right-3 sm:bottom-4 sm:right-4 z-20 pointer-events-none">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/85 text-cyan-300 border border-cyan-500/30 text-xs font-sans font-medium backdrop-blur-md shadow-lg transition-transform duration-200 group-hover:scale-105">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+                          </svg>
+                          Click to inspect in full resolution
+                        </span>
+                      </div>
+                    </div>
+                  </MediaBreakout>
+                </div>
 
                 <MacWindow
                   id="card-sim"
