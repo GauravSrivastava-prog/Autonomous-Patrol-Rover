@@ -68,6 +68,71 @@ api.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Clean Tabular Runtime Event Logger ──
+LOG_CYAN = "\033[36m"
+LOG_B_CYAN = "\033[1;96m"
+LOG_BLUE = "\033[1;94m"
+LOG_GREEN = "\033[1;92m"
+LOG_YELLOW = "\033[1;93m"
+LOG_PURPLE = "\033[1;95m"
+LOG_DIM = "\033[90m"
+LOG_BOLD = "\033[1m"
+LOG_RESET = "\033[0m"
+LOG_RED = "\033[1;31m"
+
+CATEGORY_COLORS = {
+    "MISSION": LOG_PURPLE,
+    "MODE": LOG_BLUE,
+    "TELEOP": LOG_YELLOW,
+    "VLM": LOG_B_CYAN,
+    "VIEW": "\033[1;35m",
+    "RESET": "\033[1;33m",
+    "MANIFESTO": LOG_GREEN,
+    "STREAM": LOG_CYAN,
+    "HTTP": "\033[1;37m",
+}
+
+_last_logged_category = None
+
+def log_runtime_event(category: str, method: str, route: str, status: int = 200, latency_ms: float = 0.0):
+    """
+    Formats runtime request/teleop/mode logs into a clean, aligned, tabular layout
+    with clear columns:
+      [Timestamp]   [Category]   Method   Endpoint/Route   Status   (Latency)
+    and adds vertical spacing between distinct event categories for clear live demo visibility.
+    """
+    global _last_logged_category
+
+    # Add vertical spacing between distinct event types
+    if _last_logged_category is not None and _last_logged_category != category:
+        print()
+    _last_logged_category = category
+
+    ts_raw = f"[{time.strftime('%H:%M:%S')}]"
+    ts_str = f"{LOG_DIM}{ts_raw}{LOG_RESET}"
+
+    cat_color = CATEGORY_COLORS.get(category, LOG_CYAN)
+    cat_padded = f"[{category}]".ljust(11)
+    cat_str = f"{cat_color}{cat_padded}{LOG_RESET}"
+
+    method_padded = f"{method:<6}"
+    method_str = f"{LOG_BOLD}{method_padded}{LOG_RESET}"
+
+    route_disp = route if len(route) <= 34 else route[:31] + "..."
+    route_padded = f"{route_disp:<34}"
+    route_str = f"{LOG_RESET}{route_padded}"
+
+    status_icon = "✔" if status < 400 else "✖"
+    status_msg = f"{status_icon} {status} OK" if status < 400 else f"{status_icon} {status} ERR"
+    status_color = LOG_GREEN if status < 400 else LOG_RED
+    status_padded = f"{status_msg:<10}"
+    status_str = f"{status_color}{status_padded}{LOG_RESET}"
+
+    lat_raw = f"({latency_ms:.1f}ms)"
+    lat_str = f"{LOG_DIM}{lat_raw}{LOG_RESET}"
+
+    print(f"  {ts_str}   {cat_str}   {method_str}   {route_str}   {status_str}   {lat_str}")
+
 # ── Homebrew-Style Fancy Telemetry Middleware ──
 @api.middleware("http")
 async def homebrew_telemetry_logger(request: Request, call_next):
@@ -81,27 +146,29 @@ async def homebrew_telemetry_logger(request: Request, call_next):
 
     prompt_param = request.query_params.get("prompt")
     query_str = f"?prompt={prompt_param}" if prompt_param else ""
+    t0 = time.perf_counter()
     response = await call_next(request)
+    latency_ms = (time.perf_counter() - t0) * 1000.0
     status = response.status_code
 
-    tag = "🌐 [HTTP]"
+    cat = "HTTP"
     if path.startswith("/manual"):
-        tag = "🕹️ [TELEOP]"
+        cat = "TELEOP"
     elif path.startswith("/set_target"):
-        tag = "🎯 [VLM]"
+        cat = "VLM"
     elif path.startswith("/set_mode"):
-        tag = "🧭 [MODE]"
+        cat = "MODE"
     elif path.startswith("/set_view"):
-        tag = "🎥 [VIEW]"
+        cat = "VIEW"
     elif path.startswith("/reset"):
-        tag = "🔄 [RESET]"
+        cat = "RESET"
     elif path == "/landing":
-        tag = "📖 [MANIFESTO]"
+        cat = "MANIFESTO"
     elif path in ("/", "/dashboard"):
-        tag = "🚀 [MISSION]"
+        cat = "MISSION"
 
-    status_icon = "✔" if status < 400 else "✖"
-    print(f"\033[1;36m==>\033[0m {tag} {method} {path}{query_str} \033[1;32m{status_icon} {status} OK\033[0m")
+    route_text = f"{path}{query_str}"
+    log_runtime_event(cat, method, route_text, status, latency_ms)
     return response
 
 # ── 30 FPS MJPEG Stream Generators (Async & RFC-Compliant WebKit-Safe) ──
@@ -234,36 +301,43 @@ async def websocket_telemetry(websocket: WebSocket):
     - Receives real-time operator commands (SET_MODE, MANUAL, SET_TARGET, SET_VIEW, RESET).
     """
     await ws_manager.connect(websocket)
+    log_runtime_event("STREAM", "WS", "/ws (client connected)", 200, 0.1)
     try:
         while True:
             # 1. Non-blocking check for client actions (33ms timeout ~ 30Hz)
             try:
                 msg = await asyncio.wait_for(websocket.receive_json(), timeout=0.033)
                 action = msg.get("action", "")
+                t0 = time.perf_counter()
                 if action == "SET_MODE":
                     m = msg.get("mode", "AI_PATROL").upper()
                     try:
                         controller.set_mode(ControlMode(m))
-                        print(f"\033[1;36m==>\033[0m 🧭 [MODE] WS SET_MODE {m} \033[1;32m✔ 200 OK\033[0m")
+                        lat = (time.perf_counter() - t0) * 1000.0
+                        log_runtime_event("MODE", "WS", f"SET_MODE {m}", 200, lat)
                     except ValueError:
                         pass
                 elif action == "MANUAL":
                     cmd = msg.get("cmd", "STOP").upper()
                     controller.set_manual(cmd)
+                    lat = (time.perf_counter() - t0) * 1000.0
                     if cmd != "STOP":
-                        print(f"\033[1;36m==>\033[0m 🕹️ [TELEOP] WS MANUAL {cmd} \033[1;32m✔ 200 OK\033[0m")
+                        log_runtime_event("TELEOP", "WS", f"MANUAL {cmd}", 200, lat)
                 elif action == "SET_TARGET":
                     p = msg.get("prompt", "")
                     if p:
                         controller.set_chase_prompt(p)
-                        print(f"\033[1;36m==>\033[0m 🎯 [VLM] WS SET_TARGET prompt=\"{p}\" \033[1;32m✔ 200 OK\033[0m")
+                        lat = (time.perf_counter() - t0) * 1000.0
+                        log_runtime_event("VLM", "WS", f'SET_TARGET "{p}"', 200, lat)
                 elif action == "SET_VIEW":
                     v = msg.get("view", "TPP").upper()
                     controller.set_view_mode(v)
-                    print(f"\033[1;36m==>\033[0m 🎥 [VIEW] WS SET_VIEW {v} \033[1;32m✔ 200 OK\033[0m")
+                    lat = (time.perf_counter() - t0) * 1000.0
+                    log_runtime_event("VIEW", "WS", f"SET_VIEW {v}", 200, lat)
                 elif action == "RESET":
                     controller.reset_teleport()
-                    print(f"\033[1;36m==>\033[0m 🔄 [RESET] WS RESET (0,0) \033[1;32m✔ 200 OK\033[0m")
+                    lat = (time.perf_counter() - t0) * 1000.0
+                    log_runtime_event("RESET", "WS", "RESET (0,0)", 200, lat)
             except asyncio.TimeoutError:
                 pass
 
