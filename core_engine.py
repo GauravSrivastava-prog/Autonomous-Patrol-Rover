@@ -543,12 +543,86 @@ class RobotController:
         if self.perception_thread and self.perception_thread.is_alive():
             self.perception_thread.join(timeout=1.0)
 
+    @staticmethod
+    def is_in_frontal_sector(rx: float, ry: float, ryaw: float,
+                             obj_x: float, obj_y: float,
+                             max_dist: float = 2.50,
+                             max_angle_deg: float = 45.0) -> Tuple[bool, float, float]:
+        """
+        Computes 3D relative bearing and distance from rover forward vector to object.
+        Strictly gates detections to frontal sector [-45°, +45°] and distance <= 2.5m.
+        """
+        dx = obj_x - rx
+        dy = obj_y - ry
+        dist = math.hypot(dx, dy)
+        if dist > max_dist or dist < 1e-4:
+            return False, dist, 0.0
+        target_yaw = math.atan2(dy, dx)
+        bearing = (target_yaw - ryaw + math.pi) % (2.0 * math.pi) - math.pi
+        in_sector = abs(bearing) <= math.radians(max_angle_deg)
+        return in_sector, dist, math.degrees(bearing)
+
+    @staticmethod
+    def compute_iou(box1: List[int], box2: List[int]) -> float:
+        """Computes Intersection over Union (IoU) between two bounding boxes [x1, y1, x2, y2]."""
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        inter_w = max(0, x2 - x1)
+        inter_h = max(0, y2 - y1)
+        inter_area = inter_w * inter_h
+        area1 = max(1, (box1[2] - box1[0]) * (box1[3] - box1[1]))
+        area2 = max(1, (box2[2] - box2[0]) * (box2[3] - box2[1]))
+        union_area = area1 + area2 - inter_area
+        return inter_area / float(union_area)
+
+    @classmethod
+    def apply_strict_nms(cls, detections: List[Dict[str, Any]], iou_thresh: float = 0.45) -> List[Dict[str, Any]]:
+        """
+        Enforces strict Non-Maximum Suppression (IoU <= 0.45) and 1-box-per-entity deduplication
+        to eliminate colliding, overlapping multi-box predictions.
+        """
+        if not detections:
+            return []
+        sorted_dets = sorted(detections, key=lambda d: d.get("conf", 0.0), reverse=True)
+        selected = []
+        selected_keys = set()
+
+        for det in sorted_dets:
+            box = det.get("box", [])
+            if len(box) != 4:
+                continue
+            key = det.get("key", None)
+            if key and key in selected_keys:
+                continue
+
+            overlap = False
+            for s in selected:
+                iou = cls.compute_iou(box, s["box"])
+                if iou > iou_thresh:
+                    overlap = True
+                    break
+                cx1, cy1 = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
+                cx2, cy2 = (s["box"][0] + s["box"][2]) / 2.0, (s["box"][1] + s["box"][3]) / 2.0
+                if math.hypot(cx1 - cx2, cy1 - cy2) < 45.0:
+                    overlap = True
+                    break
+
+            if not overlap:
+                selected.append(det)
+                if key:
+                    selected_keys.add(key)
+
+        return selected
+
     def _compute_frustum_bboxes(self, cam_x: float, cam_y: float, cam_z: float,
                                 cam_yaw: float, cam_pitch: float,
-                                rx: float, ry: float, is_close_range: bool) -> List[Dict[str, Any]]:
+                                rx: float, ry: float, ryaw: float,
+                                is_close_range: bool) -> List[Dict[str, Any]]:
         """
-        Computes 2D viewport bounding boxes for arena objects in the camera frustum.
-        Applies optical center normalization and dynamic ROI padding for close objects.
+        Computes 2D viewport bounding boxes for arena objects strictly inside
+        the rover's 3D frontal sector cone [-45°, +45°] and distance <= 2.5m.
         """
         label_map = {
             "RED": "traffic cone",
@@ -560,6 +634,11 @@ class RobotController:
         }
         boxes = []
         for key, obj in ARENA_OBJECTS.items():
+            # PHASE 1: Frontal Sector Gating (strictly [-45°, +45°] and distance <= 2.5m)
+            in_sector, dist, bearing_deg = self.is_in_frontal_sector(rx, ry, ryaw, obj.x, obj.y, max_dist=2.50, max_angle_deg=45.0)
+            if not in_sector:
+                continue
+
             pts = []
             for i in range(8):
                 ang = i * (2.0 * math.pi / 8.0)
@@ -580,11 +659,10 @@ class RobotController:
                 if x2 > 0 and x1 < CAMERA_W and y2 > 0 and y1 < CAMERA_H:
                     bw, bh = x2 - x1, y2 - y1
                     if bw >= 12 and bh >= 12:
-                        dist_to_rover = math.hypot(rx - obj.x, ry - obj.y)
                         # Dynamic Proximity Fallback: Expand ROI padding when close
-                        if dist_to_rover < 0.65 or is_close_range:
-                            pad_x = int(bw * 0.10)
-                            pad_y = int(bh * 0.10)
+                        if dist < 0.65 or is_close_range:
+                            pad_x = int(bw * 0.08)
+                            pad_y = int(bh * 0.08)
                             x1 = max(0, x1 - pad_x)
                             y1 = max(0, y1 - pad_y)
                             x2 = min(CAMERA_W - 1, x2 + pad_x)
@@ -595,26 +673,29 @@ class RobotController:
                             x2 = min(CAMERA_W - 1, x2)
                             y2 = min(CAMERA_H - 1, y2)
 
-                        conf = round(min(0.96, max(0.85, 0.98 - 0.08 * dist_to_rover)), 2)
+                        conf = round(min(0.96, max(0.85, 0.98 - 0.05 * dist)), 2)
                         boxes.append({
                             "label": label_map.get(key, "object"),
                             "conf": conf,
                             "box": [x1, y1, x2, y2],
                             "key": key,
-                            "dist": round(dist_to_rover, 2)
+                            "obj_x": obj.x,
+                            "obj_y": obj.y,
+                            "dist": round(dist, 2),
+                            "bearing": round(bearing_deg, 1)
                         })
         return boxes
 
     def _perception_loop(self):
         """
-        Asynchronous perception worker: runs YOLOv8 at ~8 Hz with Dynamic Proximity Fallback,
-        Frustum Center Normalization, and Anti-Flicker Temporal Retention across frames.
+        Asynchronous perception worker: runs YOLOv8 with strict NMS (conf=0.55, iou=0.45),
+        Frontal Sector Gating ([-45°, +45°], d <= 2.5m), and 3-Frame Temporal Confidence Hysteresis.
         """
         while self.running:
             time.sleep(0.10)
             with self.state.lock:
                 clean_img = self.latest_clean_frame.copy() if self.latest_clean_frame is not None else None
-                rx, ry = self.state.x, self.state.y
+                rx, ry, ryaw = self.state.x, self.state.y, self.state.yaw
 
             if clean_img is None:
                 continue
@@ -628,31 +709,30 @@ class RobotController:
                 min_obj_dist = min(d_to_objs) if d_to_objs else 1.0
                 is_close_range = (min_obj_dist < 0.50)
 
-                # Dynamic Proximity Fallback threshold: lower threshold when close (0.28 vs 0.40)
-                yolo_conf = 0.28 if is_close_range else 0.40
-
-                # Compute ground-truth frustum boxes for normalization and proximity retention
+                # Compute ground-truth frustum boxes for frontal sector
                 cam_params = getattr(self, "last_cam_params", None)
                 frustum_boxes = []
                 if cam_params:
                     cx, cy, cz, cyaw, cpitch = cam_params
-                    frustum_boxes = self._compute_frustum_bboxes(cx, cy, cz, cyaw, cpitch, rx, ry, is_close_range)
+                    frustum_boxes = self._compute_frustum_bboxes(cx, cy, cz, cyaw, cpitch, rx, ry, ryaw, is_close_range)
 
                 raw_detections = []
-                # If YOLO model is loaded, run inference
+                # Phase 2: YOLOv8 inference with strict thresholds (conf=0.55, iou=0.45)
                 if self.perception and self.perception.is_loaded and self.perception.yolo_model is not None:
                     dev = "mps" if self.perception.device == "mps" and torch.backends.mps.is_available() else "cpu"
                     try:
                         results = self.perception.yolo_model.predict(
                             small_img,
-                            conf=yolo_conf,
+                            conf=0.55,
+                            iou=0.45,
                             verbose=False,
                             device=dev
                         )
                     except Exception:
                         results = self.perception.yolo_model.predict(
                             small_img,
-                            conf=yolo_conf,
+                            conf=0.55,
+                            iou=0.45,
                             verbose=False,
                             device="cpu"
                         )
@@ -664,104 +744,171 @@ class RobotController:
                             for b in boxes:
                                 cls_id = int(b.cls[0].item())
                                 conf = float(b.conf[0].item())
+                                if conf < 0.55:
+                                    continue
                                 label = names.get(cls_id, f"object_{cls_id}")
                                 xyxy = b.xyxy[0].cpu().numpy()
                                 x1 = int(xyxy[0] * (w / 640.0))
                                 y1 = int(xyxy[1] * (h / 360.0))
                                 x2 = int(xyxy[2] * (w / 640.0))
                                 y2 = int(xyxy[3] * (h / 360.0))
-                                # Expand ROI padding if close range
+                                det_cx = (x1 + x2) / 2.0
+                                det_cy = (y1 + y2) / 2.0
+
+                                # Map detection center to 3D arena coordinates
+                                matched_key = None
+                                matched_obj = None
+                                min_match_dist = 180.0
+                                for k, obj in ARENA_OBJECTS.items():
+                                    if cam_params:
+                                        p_center = self._project_point(obj.x, obj.y, obj.height / 2.0, cx, cy, cz, cyaw, cpitch)
+                                        if p_center:
+                                            d_screen = math.hypot(det_cx - p_center[0], det_cy - p_center[1])
+                                            if d_screen < min_match_dist:
+                                                min_match_dist = d_screen
+                                                matched_key = k
+                                                matched_obj = obj
+
+                                if matched_obj:
+                                    obj_x, obj_y = matched_obj.x, matched_obj.y
+                                else:
+                                    # Fallback estimate from camera forward ray
+                                    obj_x = rx + 1.2 * math.cos(ryaw)
+                                    obj_y = ry + 1.2 * math.sin(ryaw)
+
+                                # Frontal Sector Gating: [-45°, +45°] and dist <= 2.5m
+                                in_sector, dist_r, bearing_deg = self.is_in_frontal_sector(rx, ry, ryaw, obj_x, obj_y, max_dist=2.50, max_angle_deg=45.0)
+                                if not in_sector:
+                                    continue
+
                                 if is_close_range:
                                     bw, bh = x2 - x1, y2 - y1
-                                    pad_x = int(bw * 0.10)
-                                    pad_y = int(bh * 0.10)
+                                    pad_x = int(bw * 0.08)
+                                    pad_y = int(bh * 0.08)
                                     x1 = max(0, x1 - pad_x)
                                     y1 = max(0, y1 - pad_y)
                                     x2 = min(w - 1, x2 + pad_x)
                                     y2 = min(h - 1, y2 + pad_y)
+
                                 raw_detections.append({
                                     "label": label,
                                     "conf": round(conf, 2),
-                                    "box": [x1, y1, x2, y2]
+                                    "box": [x1, y1, x2, y2],
+                                    "key": matched_key,
+                                    "obj_x": obj_x,
+                                    "obj_y": obj_y,
+                                    "dist": round(dist_r, 2),
+                                    "bearing": round(bearing_deg, 1)
                                 })
 
-                # Dynamic Proximity Fallback: Ensure all visible objects at close range or in frustum remain tracked
+                # Dynamic Proximity Fallback: Ensure frontal sector visible objects are covered
                 if frustum_boxes:
                     for fb in frustum_boxes:
-                        # Check if already covered by a YOLO detection
                         covered = False
-                        fx1, fy1, fx2, fy2 = fb["box"]
-                        fcx, fcy = (fx1 + fx2) / 2.0, (fy1 + fy2) / 2.0
                         for det in raw_detections:
-                            dx1, dy1, dx2, dy2 = det["box"]
-                            dcx, dcy = (dx1 + dx2) / 2.0, (dy1 + dy2) / 2.0
-                            if math.hypot(fcx - dcx, fcy - dcy) < 120 or (det["label"] == fb["label"]):
+                            if det.get("key") == fb.get("key") or self.compute_iou(fb["box"], det["box"]) > 0.35:
                                 covered = True
                                 break
-                        # If close range or missing from YOLO, inject frustum box
                         if not covered and (is_close_range or len(raw_detections) == 0):
-                            raw_detections.append({
-                                "label": fb["label"],
-                                "conf": fb["conf"],
-                                "box": fb["box"]
-                            })
+                            raw_detections.append(fb)
 
-                # Anti-Flicker Temporal Retention (Hysteresis Tracking across frames)
+                # Apply Strict NMS (iou_thresh=0.45)
+                filtered_candidates = self.apply_strict_nms(raw_detections, iou_thresh=0.45)
+
+                # Phase 2: Temporal Confidence Hysteresis Buffer (Confirmation >= 3 consecutive frames)
                 updated_tracks = {}
-                for det in raw_detections:
+                matched_track_keys = set()
+
+                for det in filtered_candidates:
                     d_box = det["box"]
                     d_label = det["label"]
                     d_conf = det["conf"]
+                    d_key = det.get("key")
                     d_cx = (d_box[0] + d_box[2]) / 2.0
                     d_cy = (d_box[1] + d_box[3]) / 2.0
 
                     best_match_key = None
                     best_match_dist = 140.0
                     for t_key, track in self.active_tracks.items():
-                        if track["label"] == d_label:
-                            t_cx = (track["box"][0] + track["box"][2]) / 2.0
-                            t_cy = (track["box"][1] + track["box"][3]) / 2.0
-                            dist = math.hypot(d_cx - t_cx, d_cy - t_cy)
-                            if dist < best_match_dist:
-                                best_match_dist = dist
-                                best_match_key = t_key
+                        if t_key in matched_track_keys:
+                            continue
+                        same_key = (d_key and track.get("key") == d_key)
+                        same_label = (track["label"] == d_label)
+                        t_cx = (track["box"][0] + track["box"][2]) / 2.0
+                        t_cy = (track["box"][1] + track["box"][3]) / 2.0
+                        dist_px = math.hypot(d_cx - t_cx, d_cy - t_cy)
+                        if same_key or (same_label and dist_px < best_match_dist):
+                            best_match_dist = dist_px
+                            best_match_key = t_key
 
                     if best_match_key is not None:
-                        # Smooth coordinates using EMA (0.70 / 0.30)
-                        old_box = self.active_tracks[best_match_key]["box"]
+                        matched_track_keys.add(best_match_key)
+                        prev = self.active_tracks[best_match_key]
+                        hits = prev.get("consecutive_hits", 1) + 1
+                        confirmed = (hits >= 3)
+                        # Exponential smoothing (EMA: 0.70 / 0.30)
+                        old_b = prev["box"]
                         smooth_box = [
-                            int(0.70 * d_box[0] + 0.30 * old_box[0]),
-                            int(0.70 * d_box[1] + 0.30 * old_box[1]),
-                            int(0.70 * d_box[2] + 0.30 * old_box[2]),
-                            int(0.70 * d_box[3] + 0.30 * old_box[3]),
+                            int(0.70 * d_box[0] + 0.30 * old_b[0]),
+                            int(0.70 * d_box[1] + 0.30 * old_b[1]),
+                            int(0.70 * d_box[2] + 0.30 * old_b[2]),
+                            int(0.70 * d_box[3] + 0.30 * old_b[3]),
                         ]
+                        smooth_conf = round(0.70 * d_conf + 0.30 * prev["conf"], 2)
                         updated_tracks[best_match_key] = {
+                            "key": d_key or prev.get("key", best_match_key),
                             "label": d_label,
-                            "conf": round(0.70 * d_conf + 0.30 * self.active_tracks[best_match_key]["conf"], 2),
+                            "conf": smooth_conf,
                             "box": smooth_box,
-                            "miss": 0
+                            "consecutive_hits": hits,
+                            "confirmed": confirmed,
+                            "miss_count": 0,
+                            "obj_x": det.get("obj_x", prev.get("obj_x")),
+                            "obj_y": det.get("obj_y", prev.get("obj_y")),
                         }
                     else:
-                        new_key = f"{d_label}_{int(d_cx)}_{int(d_cy)}"
-                        updated_tracks[new_key] = {
+                        new_id = d_key or f"{d_label}_{int(d_cx)}_{int(d_cy)}"
+                        updated_tracks[new_id] = {
+                            "key": d_key or new_id,
                             "label": d_label,
                             "conf": d_conf,
                             "box": d_box,
-                            "miss": 0
+                            "consecutive_hits": 1,
+                            "confirmed": False,  # Probationary: requires >= 3 frames
+                            "miss_count": 0,
+                            "obj_x": det.get("obj_x"),
+                            "obj_y": det.get("obj_y"),
                         }
 
-                # Retain missed tracks for up to 3 frames (~300ms) to eliminate flicker
+                # Manage tracks not detected in this frame
                 for t_key, track in self.active_tracks.items():
-                    if t_key not in updated_tracks:
-                        track["miss"] += 1
-                        if track["miss"] <= 3:
+                    if t_key not in updated_tracks and t_key not in matched_track_keys:
+                        ox, oy = track.get("obj_x"), track.get("obj_y")
+                        in_sec = True
+                        if ox is not None and oy is not None:
+                            in_sec, _, _ = self.is_in_frontal_sector(rx, ry, ryaw, ox, oy, max_dist=2.50, max_angle_deg=45.0)
+                        if not in_sec:
+                            continue
+                        track["miss_count"] = track.get("miss_count", 0) + 1
+                        if track["miss_count"] <= 2 and track.get("confirmed", False):
                             updated_tracks[t_key] = track
 
                 self.active_tracks = updated_tracks
-                final_detections = [
-                    {"label": t["label"], "conf": t["conf"], "box": t["box"]}
+
+                # Only render confirmed bounding boxes (consecutive_hits >= 3 and conf >= 0.55)
+                confirmed_dets = [
+                    {
+                        "label": t["label"],
+                        "conf": t["conf"],
+                        "box": t["box"],
+                        "key": t.get("key", "")
+                    }
                     for t in self.active_tracks.values()
+                    if t.get("confirmed", False)
                 ]
+
+                # Final NMS deduplication pass
+                final_detections = self.apply_strict_nms(confirmed_dets, iou_thresh=0.45)
 
                 with self.state.lock:
                     self.state.yolo_detections = final_detections
