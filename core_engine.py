@@ -1452,7 +1452,7 @@ class RobotController:
         if floor_poly is not None:
             cv2.fillPoly(frame, [floor_poly], (45, 45, 48))
 
-        # High-Contrast Perspective Floor Grid & Markings (Clipped to Near-Plane)
+        # Clean Perspective Floor Grid (Uniform 1px Tiles, Zero Highlighted Axis Lines)
         grid_step = 0.40
         num_grid = int(ARENA_BOUND / grid_step)
         for i in range(-num_grid, num_grid + 1):
@@ -1461,9 +1461,7 @@ class RobotController:
             p2_cam = self._to_cam(gx, ARENA_BOUND, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
             seg = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=0.08)
             if seg:
-                color = (65, 68, 74) if i != 0 else (90, 95, 105)
-                thickness = 2 if i == 0 else 1
-                cv2.line(frame, seg[0], seg[1], color, thickness)
+                cv2.line(frame, seg[0], seg[1], (60, 63, 68), 1)
 
         for j in range(-num_grid, num_grid + 1):
             gy = j * grid_step
@@ -1471,15 +1469,7 @@ class RobotController:
             p2_cam = self._to_cam(ARENA_BOUND, gy, 0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
             seg = self._clip_segment_near_plane(p1_cam, p2_cam, z_near=0.08)
             if seg:
-                color = (65, 68, 74) if j != 0 else (90, 95, 105)
-                thickness = 2 if j == 0 else 1
-                cv2.line(frame, seg[0], seg[1], color, thickness)
-
-        # Center Floor Ring
-        c_proj = self._project_point(0, 0, 0.001, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-        if c_proj:
-            scale_c = FOCAL_LENGTH / max(0.1, c_proj[2])
-            cv2.circle(frame, (c_proj[0], c_proj[1]), max(8, int(0.45 * scale_c)), (85, 90, 100), 2)
+                cv2.line(frame, seg[0], seg[1], (60, 63, 68), 1)
 
         # ── Pass 2: Ground Contact Shadows (Drawn Directly on Floor Before Walls) ──
         for obj in ARENA_OBJECTS.values():
@@ -1504,21 +1494,6 @@ class RobotController:
                 cv2.ellipse(shadow_overlay, (rcx, rcy), (sw_w, sw_h),
                             int(-math.degrees(ryaw)), 0, 360, (0, 0, 0), -1)
                 cv2.addWeighted(shadow_overlay, 0.45, frame, 0.55, 0, frame)
-
-                # Forward Headlight Ground Illumination Beam (Crisp Pure White)
-                beam_len = 0.95
-                beam_spread = 0.35
-                b_left = self._project_point(rx + beam_len * math.cos(ryaw) - beam_spread * math.sin(ryaw),
-                                             ry + beam_len * math.sin(ryaw) + beam_spread * math.cos(ryaw),
-                                             0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-                b_right = self._project_point(rx + beam_len * math.cos(ryaw) + beam_spread * math.sin(ryaw),
-                                              ry + beam_len * math.sin(ryaw) - beam_spread * math.cos(ryaw),
-                                              0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-                if b_left and b_right:
-                    beam_poly = np.array([[rcx, rcy], [b_left[0], b_left[1]], [b_right[0], b_right[1]]], dtype=np.int32)
-                    beam_layer = frame.copy()
-                    cv2.fillPoly(beam_layer, [beam_poly], (245, 248, 255))
-                    cv2.addWeighted(beam_layer, 0.14, frame, 0.86, 0, frame)
 
         # ── Pass 3: Solid Enclosing Facility Walls (Near-Plane Clipped, Culled & Depth Sorted) ──
         wall_h = 2.40
@@ -1938,18 +1913,6 @@ class RobotController:
                                      [facet_pts_t[j][0], facet_pts_t[j][1]], [facet_pts_t[i][0], facet_pts_t[i][1]]], dtype=np.int32)
                     cv2.fillPoly(frame, [poly], obj.bgr_color)
 
-        # 3. Target HUD Reticle (If active chase target)
-        if key == target_key:
-            reticle_y = ty - 18
-            cv2.circle(frame, (tx, reticle_y), 12, (0, 229, 255), 2)
-            cv2.circle(frame, (tx, reticle_y), 4, (0, 229, 255), -1)
-            cv2.line(frame, (tx - 18, reticle_y), (tx + 18, reticle_y), (0, 229, 255), 1)
-            cv2.line(frame, (tx, reticle_y - 18), (tx, reticle_y + 18), (0, 229, 255), 1)
-
-            tag = f"LOCKED: {obj.name.upper()}"
-            cv2.putText(frame, tag, (tx - len(tag) * 4, reticle_y - 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 229, 255), 1, cv2.LINE_AA)
-
     # ── 3D Rover Model Rendering (Military Prototype: Matte Gunmetal & Subtle White LEDs) ──
     def _render_3d_rover(self, frame, rx, ry, ryaw, vl, vr, wheel_l, wheel_r,
                          cam_x, cam_y, cam_z, cam_yaw, cam_pitch, render_shadow: bool = True):
@@ -1968,21 +1931,6 @@ class RobotController:
             cv2.ellipse(shadow_overlay, (rcx, rcy), (sw_w, sw_h),
                         int(-math.degrees(ryaw)), 0, 360, (0, 0, 0), -1)
             cv2.addWeighted(shadow_overlay, 0.45, frame, 0.55, 0, frame)
-
-            # Subtle Forward Headlight Ground Illumination Beam (Crisp Pure White)
-            beam_len = 0.95
-            beam_spread = 0.35
-            b_left = self._project_point(rx + beam_len * math.cos(ryaw) - beam_spread * math.sin(ryaw),
-                                         ry + beam_len * math.sin(ryaw) + beam_spread * math.cos(ryaw),
-                                         0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            b_right = self._project_point(rx + beam_len * math.cos(ryaw) + beam_spread * math.sin(ryaw),
-                                          ry + beam_len * math.sin(ryaw) - beam_spread * math.cos(ryaw),
-                                          0.0, cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-            if b_left and b_right:
-                beam_poly = np.array([[rcx, rcy], [b_left[0], b_left[1]], [b_right[0], b_right[1]]], dtype=np.int32)
-                beam_layer = frame.copy()
-                cv2.fillPoly(beam_layer, [beam_poly], (245, 248, 255))  # Crisp white headlight beam
-                cv2.addWeighted(beam_layer, 0.14, frame, 0.86, 0, frame)
 
         # 3. Sleek Elongated Matte Gunmetal AGV Chassis Hull
         bw_2 = 0.18  # elongated length
